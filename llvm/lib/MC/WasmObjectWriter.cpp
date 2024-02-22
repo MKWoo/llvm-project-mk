@@ -636,6 +636,8 @@ void WasmObjectWriter::recordRelocation(MCAssembler &Asm,
   }
 }
 
+#define GV_FIX_ADD_OFFSET 0xC00000 //12MB. minkee add. 给偏移额外加一个偏移，这个偏移会超过wasm线性内存的最大长度，有这个说明是在使用一个gv，引擎减去这个值，再去找对应的gv
+
 // Compute a value to write into the code at the location covered
 // by RelEntry. This value isn't used by the static linker; it just serves
 // to make the object format more readable and more likely to be directly
@@ -705,7 +707,7 @@ WasmObjectWriter::getProvisionalValue(const WasmRelocationEntry &RelEntry,
     const wasm::WasmDataReference &SymRef = DataLocations[RelEntry.Symbol];
     const WasmDataSegment &Segment = DataSegments[SymRef.Segment];
     // Ignore overflow. LLVM allows address arithmetic to silently wrap.
-    return Segment.Offset + SymRef.Offset + RelEntry.Addend;
+    return Segment.Offset + SymRef.Offset + RelEntry.Addend + GV_FIX_ADD_OFFSET;
   }
   default:
     llvm_unreachable("invalid relocation type");
@@ -772,6 +774,8 @@ void WasmObjectWriter::applyRelocations(
     uint64_t Offset = ContentsOffset +
                       RelEntry.FixupSection->getSectionOffset() +
                       RelEntry.Offset;
+
+    StringRef Name = RelEntry.Symbol->getName();
 
     LLVM_DEBUG(dbgs() << "applyRelocation: " << RelEntry << "\n");
     uint64_t Value = getProvisionalValue(RelEntry, Layout);
@@ -1568,6 +1572,9 @@ uint64_t WasmObjectWriter::writeOneObject(MCAssembler &Asm,
       // or used in relocations.
       if (S.isTemporary() && S.getName().empty())
         continue;
+
+	  StringRef Name = S.getName();
+
 
       const auto &WS = static_cast<const MCSymbolWasm &>(S);
       LLVM_DEBUG(

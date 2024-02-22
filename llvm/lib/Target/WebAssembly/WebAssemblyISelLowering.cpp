@@ -561,15 +561,25 @@ LowerCallResults(MachineInstr &CallResults, DebugLoc DL, MachineBasicBlock *BB,
   // CALL_INDIRECT takes an i32, but in wasm64 we represent function pointers
   // as 64-bit for uniformity with other pointer types.
   // See also: WebAssemblyFastISel::selectCall
-  if (IsIndirect && MF.getSubtarget<WebAssemblySubtarget>().hasAddr64()) {
-    Register Reg32 =
-        MF.getRegInfo().createVirtualRegister(&WebAssembly::I32RegClass);
-    auto &FnPtr = CallParams.getOperand(0);
-    BuildMI(*BB, CallResults.getIterator(), DL,
-            TII.get(WebAssembly::I32_WRAP_I64), Reg32)
-        .addReg(FnPtr.getReg());
-    FnPtr.setReg(Reg32);
-  }
+
+
+	//(call_indirect $env.__indirect_function_table(type $t15)
+	//	(local.get $l3)
+	//	(i32.const 1)
+	//	(i32.wrap_i64    //注释下面代码后，将不会生成此条指令，这条指令会把load出来的虚函数地址截断为32位，所以必须不生成此条指令
+	//	(i64.load offset = 8
+	//		(i64.load
+	//		(local.get $l3))))))
+
+  //if (IsIndirect && MF.getSubtarget<WebAssemblySubtarget>().hasAddr64()) { //这里开始注释，minkee add
+    //Register Reg32 =
+    //    MF.getRegInfo().createVirtualRegister(&WebAssembly::I32RegClass);
+    //auto &FnPtr = CallParams.getOperand(0);
+    //BuildMI(*BB, CallResults.getIterator(), DL,
+    //        TII.get(WebAssembly::I32_WRAP_I64), Reg32)
+    //    .addReg(FnPtr.getReg());
+    //FnPtr.setReg(Reg32);
+  //}
 
   // Move the function pointer to the end of the arguments for indirect calls
   if (IsIndirect) {
@@ -1675,12 +1685,13 @@ SDValue WebAssemblyTargetLowering::LowerRETURNADDR(SDValue Op,
                                                    SelectionDAG &DAG) const {
   SDLoc DL(Op);
 
-  if (!Subtarget->getTargetTriple().isOSEmscripten()) {
-    fail(DL, DAG,
-         "Non-Emscripten WebAssembly hasn't implemented "
-         "__builtin_return_address");
-    return SDValue();
-  }
+  //默认打开的--为了关闭错误，注释此逻辑 -minkee add
+//   if (!Subtarget->getTargetTriple().isOSEmscripten()) {
+// 	  fail(DL, DAG,
+// 		  "Non-Emscripten WebAssembly hasn't implemented "
+// 		  "__builtin_return_address");
+// 	  return SDValue();
+//   }
 
   if (verifyReturnAddressArgumentIsConstant(Op, DAG))
     return SDValue();

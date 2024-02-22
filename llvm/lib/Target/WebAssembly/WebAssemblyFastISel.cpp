@@ -885,14 +885,23 @@ bool WebAssemblyFastISel::selectCall(const Instruction *I) {
     // CALL_INDIRECT takes an i32, but in wasm64 we represent function pointers
     // as 64-bit for uniformity with other pointer types.
     // See also: WebAssemblyISelLowering.cpp: LowerCallResults
-    if (Subtarget->hasAddr64()) {
-      auto Wrap = BuildMI(*FuncInfo.MBB, std::prev(FuncInfo.InsertPt), DbgLoc,
-                          TII.get(WebAssembly::I32_WRAP_I64));
-      Register Reg32 = createResultReg(&WebAssembly::I32RegClass);
-      Wrap.addReg(Reg32, RegState::Define);
-      Wrap.addReg(CalleeReg);
-      CalleeReg = Reg32;
-    }
+
+	//(call_indirect $env.__indirect_function_table(type $t15)
+	//	(local.get $l3)
+	//	(i32.const 1)
+	//	(i32.wrap_i64    //注释下面代码后，将不会生成此条指令，这条指令会把load出来的虚函数地址截断为32位，所以必须不生成此条指令
+	//	(i64.load offset = 8
+	//		(i64.load
+	//		(local.get $l3))))))
+
+    //if (Subtarget->hasAddr64()) {  //这里开始注释，minkee add
+    //  auto Wrap = BuildMI(*FuncInfo.MBB, std::prev(FuncInfo.InsertPt), MIMD,
+    //                      TII.get(WebAssembly::I32_WRAP_I64));
+    //  Register Reg32 = createResultReg(&WebAssembly::I32RegClass);
+    //  Wrap.addReg(Reg32, RegState::Define);
+    //  Wrap.addReg(CalleeReg);
+    //  CalleeReg = Reg32;
+    //}
   }
 
   for (unsigned ArgReg : Args)
