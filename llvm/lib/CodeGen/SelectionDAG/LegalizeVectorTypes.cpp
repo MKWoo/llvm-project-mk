@@ -944,6 +944,12 @@ void DAGTypeLegalizer::SplitVectorResult(SDNode *N, unsigned ResNo) {
     N->dump(&DAG);
     dbgs() << "\n";
 #endif
+
+    //有报错，可以取消下面注释，打印信息，查看错误细节-minkee add
+	// 	dbgs() << "SplitVectorResult #" << ResNo << ": ";
+	// 	N->dump(&DAG);
+	// 	dbgs() << "\n";
+
     report_fatal_error("Do not know how to split the result of this "
                        "operator!\n");
 

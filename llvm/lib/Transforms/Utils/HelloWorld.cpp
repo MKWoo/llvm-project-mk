@@ -10,8 +10,8 @@
 
 using namespace llvm;
 
-PreservedAnalyses HelloWorldPass::run(Function &F,
-                                      FunctionAnalysisManager &AM) {
-  errs() << F.getName() << "\n";
-  return PreservedAnalyses::all();
+PreservedAnalyses HelloWorldPass::run(Function& F,
+	FunctionAnalysisManager& AM) {
+	errs() << F.getName() << "\n";
+	return PreservedAnalyses::all();
 }
