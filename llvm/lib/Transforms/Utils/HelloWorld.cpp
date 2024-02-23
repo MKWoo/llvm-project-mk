@@ -35,7 +35,7 @@ namespace helper
 	bool CountFunctionCallsInModule(Module& module);
 
 	bool BuildFunctionWrappers(Module& module);
-	bool BuildFunctionInstrument(Module& module);
+	bool PatchFunctionCallVM(Module& module);
 } // namespace helper
 
 MkTestModulePass::MkTestModulePass() : OS(dbgs()) {}
@@ -84,21 +84,40 @@ PreservedAnalyses MkTestModulePass::TestRun(Module& M, ModuleAnalysisManager& AM
 
 PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 
-
-	errs() << "*******Enter MkTestModulePass::run*******" << M.getName() << "\n";
-
-	errs() << "minkee func: " << __FUNCTION__ << M.getName() << "\n";
+	errs() << "*******Enter " << __FUNCTION__ << "  *******  M:"<<M.getName() << "\n";
 
 	bool changed = true;
-	//helper::BuildFunctionWrappers(M);
-	changed &= helper::BuildFunctionInstrument(M);
+	changed &= helper::PatchFunctionCallVM(M);
+	changed &= helper::BuildFunctionWrappers(M);
 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
 //ok的，备份
-bool helper::BuildFunctionInstrument(Module& M)
+bool helper::PatchFunctionCallVM(Module& M)
 {
 	LLVMContext& context = M.getContext();
+
+	{ //测试代码，生成 CallVMFunction 函数定义
+		// 创建函数类型
+		FunctionType* funcType = FunctionType::get(Type::getVoidTy(context), false);
+
+		// 创建函数
+		Function* func = Function::Create(funcType, Function::ExternalLinkage, "CallVMFunction", &M);
+
+		// 创建基本块和指令
+		BasicBlock* entryBlock = BasicBlock::Create(context, "entry", func);
+		IRBuilder<> builder(entryBlock);
+
+		// 创建 printf 函数调用
+		FunctionType* printfType = FunctionType::get(Type::getInt32Ty(context), { Type::getInt8PtrTy(context) }, true);
+		Function* printfFunc = M.getFunction("printf");//M.getOrInsertFunction("printf", printfType);
+		Value* formatStr = builder.CreateGlobalStringPtr("in CallVMFunction\n");
+		builder.CreateCall(printfFunc, formatStr);
+
+		// 创建返回指令
+			builder.CreateRetVoid();
+	}
+
 
 	// 获取函数总数量
 	unsigned maxFuncCount = M.getFunctionList().size();
@@ -113,6 +132,13 @@ bool helper::BuildFunctionInstrument(Module& M)
 
 		if (F.empty())
 		{
+			continue;
+		}
+
+		std::string origFuncName = F.getName().str();
+		if (origFuncName == "CallVMFunction" || (origFuncName.npos != origFuncName.find("printf")) )
+		{
+			errs() << "In_func:" << __FUNCTION__ << "  skip:" << origFuncName << "\n";
 			continue;
 		}
 
@@ -140,11 +166,11 @@ bool helper::BuildFunctionInstrument(Module& M)
 		// 在patchBB中插入patch逻辑
 		builder.SetInsertPoint(patchBB);
 		Value* g_test_val = builder.CreateLoad(IntegerType::getInt32Ty(context), g_test);
-		Value* cond = builder.CreateICmpNE(g_test_val, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0));
-		BasicBlock* returnBB = BasicBlock::Create(Ctx, "returnBB", &F);
+		Value* cond = builder.CreateICmpNE(g_test_val, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 1)); //数值是0  1是测试数据
+		BasicBlock* returnBB = BasicBlock::Create(Ctx, "callVMRet", &F);
 		builder.CreateCondBr(cond, returnBB, &entryBB);
 
-		// 在returnBB中插入调用callTest的指令和返回指令
+		// 在callVMRet中插入调用call的指令和返回指令
 		builder.SetInsertPoint(returnBB);
 		builder.CreateCall(callVmFunc);
 
@@ -300,7 +326,7 @@ bool helper::BuildFunctionWrappers(Module& module)
 	// 遍历函数列表并处理每个函数
 	for (Function* F : functionList) 
 	{
-		errs() << "minkee func:" << __FUNCTION__ << ": test  " << F->getName() << "\n";
+		errs() << "func:" << __FUNCTION__ << "  F:" << F->getName() << "\n";
 
 		if (F->isDeclaration())
 		{
