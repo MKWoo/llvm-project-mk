@@ -34,8 +34,9 @@ namespace helper
 	Constant* CreateGlobalVariable(Module& module, StringRef globalVariableName);
 	bool CountFunctionCallsInModule(Module& module);
 
-	bool BuildFunctionWrappers(Module& module);
+	bool BuildWrapperFunction(Module& module);
 	bool PatchFunctionCallVM(Module& module);
+	bool GatherFunctionUseGValue(Module& module);
 } // namespace helper
 
 MkTestModulePass::MkTestModulePass() : OS(dbgs()) {}
@@ -88,18 +89,90 @@ PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 
 	bool changed = true;
 	changed &= helper::PatchFunctionCallVM(M);
-	changed &= helper::BuildFunctionWrappers(M);
+	changed &= helper::BuildWrapperFunction(M);
+			   helper::GatherFunctionUseGValue(M);
 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
-//ok的，备份
-bool helper::PatchFunctionCallVM(Module& M)
+
+bool helper::GatherFunctionUseGValue(Module& M)
 {
+	errs() << "\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << M.getName() << "\n";
+
 	LLVMContext& context = M.getContext();
 
-	{ //测试代码，生成 CallVMFunction 函数定义
+	// 获取函数总数量
+	unsigned maxFuncCount = M.getFunctionList().size();
+
+	// 给每个函数分配一个数字ID
+	unsigned funcID = 0;
+	for (Function& F : M) {
+
+		if (F.empty())
+		{
+			continue;
+		}
+
+		// 创建一个集合来存储使用的全局变量
+		std::set<GlobalVariable*> usedGlobals;
+
+		for (BasicBlock& BB : F) {
+			for (Instruction& I : BB) {
+				if (auto* loadInst = dyn_cast<LoadInst>(&I)) {
+					// 获取加载指令使用的全局变量
+					Value* ptrOperand = loadInst->getPointerOperand();
+					if (auto* globalVar = dyn_cast<GlobalVariable>(ptrOperand)) {
+						usedGlobals.insert(globalVar);
+					}
+				}
+			}
+		}
+
+		// 打印函数名和使用的全局变量
+		if (usedGlobals.size())
+		{
+			errs() << "In_func: " << F.getName() << "\n";
+			for (GlobalVariable* globalVar : usedGlobals) {
+				errs() << "  Used Global Variable: " << globalVar->getName() << "\n";
+			}
+			errs() << "\n";
+		}
+	}
+
+	return true;
+}
+
+
+bool helper::PatchFunctionCallVM(Module& M)
+{
+	errs() << "\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << M.getName() << "\n";
+	LLVMContext& context = M.getContext();
+
+// 	{ //测试代码，生成 CallVMFunction 函数定义
+// 		// 创建函数类型
+// 		FunctionType* funcType = FunctionType::get(Type::getVoidTy(context), false);
+// 
+// 		// 创建函数
+// 		Function* func = Function::Create(funcType, Function::ExternalLinkage, "CallVMFunction", &M);
+// 
+// 		// 创建基本块和指令
+// 		BasicBlock* entryBlock = BasicBlock::Create(context, "entry", func);
+// 		IRBuilder<> builder(entryBlock);
+// 
+// 		// 创建 printf 函数调用
+// 		FunctionType* printfType = FunctionType::get(Type::getInt32Ty(context), { Type::getInt8PtrTy(context) }, true);
+// 		Function* printfFunc = M.getFunction("printf");//M.getOrInsertFunction("printf", printfType);
+// 		Value* formatStr = builder.CreateGlobalStringPtr("in CallVMFunction\n");
+// 		builder.CreateCall(printfFunc, formatStr);
+// 
+// 		// 创建返回指令
+// 			builder.CreateRetVoid();
+// 	}
+
+{
 		// 创建函数类型
-		FunctionType* funcType = FunctionType::get(Type::getVoidTy(context), false);
+		Type* int8PtrType = Type::getInt8PtrTy(context);
+		FunctionType* funcType = FunctionType::get(Type::getVoidTy(context), { int8PtrType }, false);
 
 		// 创建函数
 		Function* func = Function::Create(funcType, Function::ExternalLinkage, "CallVMFunction", &M);
@@ -109,14 +182,15 @@ bool helper::PatchFunctionCallVM(Module& M)
 		IRBuilder<> builder(entryBlock);
 
 		// 创建 printf 函数调用
-		FunctionType* printfType = FunctionType::get(Type::getInt32Ty(context), { Type::getInt8PtrTy(context) }, true);
+		FunctionType* printfType = FunctionType::get(Type::getInt32Ty(context), { int8PtrType }, true);
 		Function* printfFunc = M.getFunction("printf");//M.getOrInsertFunction("printf", printfType);
-		Value* formatStr = builder.CreateGlobalStringPtr("in CallVMFunction\n");
-		builder.CreateCall(printfFunc, formatStr);
-
+		Value* formatStr = builder.CreateGlobalStringPtr("in CallVMFunction. str:%s\n");
+		Value* arg = func->arg_begin();
+		Value* args[] = { formatStr, arg };
+		builder.CreateCall(printfFunc, args);
 		// 创建返回指令
-			builder.CreateRetVoid();
-	}
+		builder.CreateRetVoid();
+}
 
 
 	// 获取函数总数量
@@ -136,11 +210,13 @@ bool helper::PatchFunctionCallVM(Module& M)
 		}
 
 		std::string origFuncName = F.getName().str();
-		if (origFuncName == "CallVMFunction" || (origFuncName.npos != origFuncName.find("printf")) )
+		if (origFuncName == "CallVMFunction" || (origFuncName.npos != origFuncName.find("printf")) || (origFuncName.npos != origFuncName.find("main")))
 		{
 			errs() << "In_func:" << __FUNCTION__ << "  skip:" << origFuncName << "\n";
 			continue;
 		}
+
+		errs() << "In_func:" << __FUNCTION__ << " **handle** f:" << origFuncName << "\n";
 
 		Module* M = F.getParent();
 		LLVMContext& Ctx = M->getContext();
@@ -152,11 +228,17 @@ bool helper::PatchFunctionCallVM(Module& M)
 			g_test = new GlobalVariable(*M, IntegerType::getInt32Ty(Ctx), false, GlobalValue::ExternalLinkage, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0), "g_test");
 		}
 
-		// 获取或创建函数 callTest
+// 		// 获取或创建函数 callTest
+// 		Function* callVmFunc = M->getFunction("CallVMFunction");
+// 		if (!callVmFunc) {
+// 			FunctionType* callTestTy = FunctionType::get(Type::getVoidTy(Ctx), false);
+// 			callVmFunc = Function::Create(callTestTy, Function::ExternalLinkage, "CallVMFunction", M);
+// 		}
+	  // 获取 CallVMFunction 函数
 		Function* callVmFunc = M->getFunction("CallVMFunction");
 		if (!callVmFunc) {
-			FunctionType* callTestTy = FunctionType::get(Type::getVoidTy(Ctx), false);
-			callVmFunc = Function::Create(callTestTy, Function::ExternalLinkage, "CallVMFunction", M);
+// 			FunctionType* callTestTy = FunctionType::get(Type::getVoidTy(Ctx), false);
+// 			callVmFunc = Function::Create(callTestTy, Function::ExternalLinkage, "CallVMFunction", M);
 		}
 
 		// 在每个函数的入口基本块的开始处插入一个新的基本块
@@ -172,8 +254,18 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 		// 在callVMRet中插入调用call的指令和返回指令
 		builder.SetInsertPoint(returnBB);
-		builder.CreateCall(callVmFunc);
+		//builder.CreateCall(callVmFunc);
+// 
+		// 获取当前函数名
+		std::string funcName = F.getName().str();
+		// 创建字符串常量
+		Value* strFuncName = builder.CreateGlobalStringPtr(funcName);
+		// 创建 CallVMFunction 函数调用
 
+		Value* args[] = { strFuncName };
+		builder.CreateCall(callVmFunc, args);
+
+		//return
 		if (F.getReturnType()->isVoidTy()) {
 			builder.CreateRetVoid();
 		}
@@ -185,134 +277,11 @@ bool helper::PatchFunctionCallVM(Module& M)
 	return true;
 }
 
-// 
-// bool helper::BuildFunctionInstrument(Module& M)
-// {
-// 	LLVMContext& context = M.getContext();
-// 
-// 	// 获取函数总数量
-// 	unsigned maxFuncCount = M.getFunctionList().size();
-// 
-// 	// 创建全局数组
-// 	ArrayType* boolArrayType = ArrayType::get(Type::getInt1Ty(context), maxFuncCount);
-// 	GlobalVariable* needPatchArray = new GlobalVariable(M, boolArrayType, false, GlobalValue::InternalLinkage, Constant::getNullValue(boolArrayType), "g_NeedPatch");
-// 
-// 	// 给每个函数分配一个数字ID
-// 	unsigned funcID = 0;
-// 	for (Function& F : M) {
-// 		// 获取原函数的名称
-// 		std::string origFuncName = F.getName().str();
-// 
-// 		// 分配ID
-// 		ConstantInt* funcIDValue = ConstantInt::get(Type::getInt32Ty(context), funcID);
-// 
-// 		// 在函数前插入代码
-// 		BasicBlock& entryBlock = F.getEntryBlock();
-// 		//IRBuilder<> builder(&entryBlock, entryBlock.begin());
-// 		Instruction* firstInst = entryBlock.getFirstNonPHIOrDbg();
-// 		IRBuilder<> builder(firstInst);
-// 
-// 		//Value* zeroIndex = ConstantInt::get(Type::getInt32Ty(context), 0);
-// 		//Value* indices[] = { zeroIndex, funcIDValue };
-// 
-// 		//Value* needPatchPtr = builder.CreateGEP(needPatchArray, indices);
-// 		Value* needPatchPtr = builder.CreateGEP(boolArrayType, needPatchArray, { builder.getInt32(0), funcIDValue }); //ConstantInt::get(Type::getInt32Ty(context), funcIDValue)
-// 
-// 
-// 
-// 		Value* needPatchValue = builder.CreateLoad(IntegerType::getInt1Ty(context), needPatchPtr);
-// 		Value* cond = builder.CreateICmpEQ(needPatchValue, ConstantInt::get(Type::getInt1Ty(context), 1));
-// 		BasicBlock* patchBlock = BasicBlock::Create(context, "patch", &F);
-// 		BasicBlock* continueBlock = BasicBlock::Create(context, "continue", &F);
-// 		builder.CreateCondBr(cond, patchBlock, continueBlock);
-// 
-// 		// 在patch块中插入代码
-// 		builder.SetInsertPoint(patchBlock);
-// 		FunctionType* callPFuncType = FunctionType::get(Type::getVoidTy(context), { Type::getInt8PtrTy(context)->getPointerTo(), Type::getInt32Ty(context) }, false);
-// 		Function* callPFunc = M.getFunction("CallPFunc");
-// 		Value* parameters = builder.CreateBitCast(&F, Type::getInt8PtrTy(context)->getPointerTo());
-// 		Value* parameterCount = builder.getInt32(F.arg_size());
-// 		builder.CreateCall(callPFuncType, callPFunc, { parameters, parameterCount });
-// 		builder.CreateRet(ConstantInt::get(Type::getInt32Ty(context), 0));
-// 		//builder.CreateBr(continueBlock);
-// 
-// 		// 更新函数的入口块
-// // 		entryBlock.getTerminator()->eraseFromParent();
-// // 		builder.SetInsertPoint(entryBlock.getTerminator());
-// // 		builder.CreateCondBr(cond, patchBlock, continueBlock);
-// 
-// 		builder.SetInsertPoint(continueBlock);
-// 
-// 
-// 		// 更新函数ID
-// 		funcID++;
-// 	}
-// 
-// 	return true;
-// }
-
-//bool helper::BuildFunctionInstrument(Module& M)
-//{
-//	LLVMContext& context = M.getContext();
-//
-//	// 获取函数总数量
-//	unsigned maxFuncCount = M.getFunctionList().size();
-//
-//	// 创建全局数组
-//	ArrayType* boolArrayType = ArrayType::get(Type::getInt1Ty(context), maxFuncCount);
-//	GlobalVariable* needPatchArray = new GlobalVariable(M, boolArrayType, false, GlobalValue::InternalLinkage, Constant::getNullValue(boolArrayType), "g_NeedPatch");
-//
-//	// 给每个函数分配一个数字ID
-//	unsigned funcID = 0;
-//	for (Function& F : M) {
-//		// 获取原函数的名称
-//		std::string origFuncName = F.getName().str();
-//
-//		// 分配ID
-//		ConstantInt* funcIDValue = ConstantInt::get(Type::getInt32Ty(context), funcID);
-//
-//		// 在函数前插入代码
-//		BasicBlock& entryBlock = F.getEntryBlock();
-//		IRBuilder<> builder(&entryBlock, entryBlock.begin());
-//
-//		//Value* zeroIndex = ConstantInt::get(Type::getInt32Ty(context), 0);
-//		//Value* indices[] = { zeroIndex, funcIDValue };
-//
-//		//Value* needPatchPtr = builder.CreateGEP(needPatchArray, indices);
-//		Value* needPatchPtr = builder.CreateGEP(boolArrayType, needPatchArray, { builder.getInt32(0), funcIDValue }); //ConstantInt::get(Type::getInt32Ty(context), funcIDValue)
-//
-//
-//
-//		Value* needPatchValue = builder.CreateLoad(IntegerType::getInt1Ty(context), needPatchPtr);
-//		Value* cond = builder.CreateICmpEQ(needPatchValue, ConstantInt::get(Type::getInt1Ty(context), 1));
-//		BasicBlock* patchBlock = BasicBlock::Create(context, "patch", &F);
-//		BasicBlock* continueBlock = BasicBlock::Create(context, "continue", &F);
-//		builder.CreateCondBr(cond, patchBlock, continueBlock);
-//
-//		// 在patch块中插入代码
-//		builder.SetInsertPoint(patchBlock);
-//		FunctionType* callPFuncType = FunctionType::get(Type::getVoidTy(context), { Type::getInt8PtrTy(context)->getPointerTo(), Type::getInt32Ty(context) }, false);
-//		Function* callPFunc = M.getFunction("CallPFunc");
-//		Value* parameters = builder.CreateBitCast(&F, Type::getInt8PtrTy(context)->getPointerTo());
-//		Value* parameterCount = builder.getInt32(F.arg_size());
-//		builder.CreateCall(callPFuncType, callPFunc, { parameters, parameterCount });
-//		builder.CreateBr(continueBlock);
-//
-//		// 更新插入点
-//		builder.SetInsertPoint(continueBlock);
-//
-//		// 更新函数ID
-//		funcID++;
-//	}
-//
-//	return true;
-//
-//}
-
 
 //void * func_UE(IM3Runtime runtime, IM3ImportContext _ctx, uint64_t * _sp,  void * _mem)
-bool helper::BuildFunctionWrappers(Module& module)
+bool helper::BuildWrapperFunction(Module& module)
 {
+	errs()<<"\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << module.getName() << "\n";
 	//auto& context = module.getContext();
 
 	// 创建函数列表
@@ -489,66 +458,3 @@ bool helper::CountFunctionCallsInModule(Module& module)
 
 	return true;
 }
-
-//ok的，备份
-//bool helper::BuildFunctionInstrument(Module& M)
-//{
-//	LLVMContext& context = M.getContext();
-//
-//	// 获取函数总数量
-//	unsigned maxFuncCount = M.getFunctionList().size();
-//
-//	// 创建全局数组
-//	ArrayType* boolArrayType = ArrayType::get(Type::getInt1Ty(context), maxFuncCount);
-//	GlobalVariable* needPatchArray = new GlobalVariable(M, boolArrayType, false, GlobalValue::InternalLinkage, Constant::getNullValue(boolArrayType), "g_NeedPatch");
-//
-//	// 给每个函数分配一个数字ID
-//	unsigned funcID = 0;
-//	for (Function& F : M) {
-//
-//		if (F.empty())
-//		{
-//			continue;
-//		}
-//
-//		Module* M = F.getParent();
-//		LLVMContext& Ctx = M->getContext();
-//		IRBuilder<> builder(Ctx);
-//
-//		// 创建全局变量 g_test
-//		GlobalVariable* g_test = M->getGlobalVariable("g_test");
-//		if (!g_test) {
-//			g_test = new GlobalVariable(*M, IntegerType::getInt32Ty(Ctx), false, GlobalValue::ExternalLinkage, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0), "g_test");
-//		}
-//
-//		// 获取或创建函数 callTest
-//		Function* callTest = M->getFunction("callTest");
-//		if (!callTest) {
-//			FunctionType* callTestTy = FunctionType::get(Type::getVoidTy(Ctx), false);
-//			callTest = Function::Create(callTestTy, Function::ExternalLinkage, "callTest", M);
-//		}
-//
-//		// 在每个函数的入口基本块的开始处插入一个新的基本块
-//		BasicBlock& entryBB = F.getEntryBlock();
-//		BasicBlock* patchBB = BasicBlock::Create(Ctx, "patchBB", &F, &entryBB);
-//
-//		// 在patchBB中插入patch逻辑
-//		builder.SetInsertPoint(patchBB);
-//		Value* g_test_val = builder.CreateLoad(IntegerType::getInt32Ty(context), g_test);
-//		Value* cond = builder.CreateICmpNE(g_test_val, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0));
-//		BasicBlock* returnBB = BasicBlock::Create(Ctx, "returnBB", &F);
-//		builder.CreateCondBr(cond, returnBB, &entryBB);
-//
-//		// 在returnBB中插入调用callTest的指令和返回指令
-//		builder.SetInsertPoint(returnBB);
-//		builder.CreateCall(callTest);
-//		if (F.getReturnType()->isVoidTy()) {
-//			builder.CreateRetVoid();
-//		}
-//		else {
-//			builder.CreateRet(Constant::getNullValue(F.getReturnType()));
-//		}
-//	}
-//
-//	return true;
-//}
