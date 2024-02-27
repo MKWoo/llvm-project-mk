@@ -192,16 +192,24 @@ bool helper::PatchFunctionCallVM(Module& M)
 		builder.CreateRetVoid();
 }
 
-
 	// 获取函数总数量
 	unsigned maxFuncCount = M.getFunctionList().size();
 
-	// 创建全局数组
-	ArrayType* boolArrayType = ArrayType::get(Type::getInt1Ty(context), maxFuncCount);
-	GlobalVariable* needPatchArray = new GlobalVariable(M, boolArrayType, false, GlobalValue::InternalLinkage, Constant::getNullValue(boolArrayType), "g_NeedPatch");
+	// 获取全局变量g_needPatch和g_funcAddress
+	GlobalVariable* g_needPatch = M.getGlobalVariable("g_needPatch"); //char g_needPatch[]
+	if (!g_needPatch) {
+		// 如果g_needPatch不存在，则声明一个外部全局变量
+		Type* i8Ty = Type::getInt8Ty(M.getContext());
+		Type* i8PtrTy = PointerType::get(i8Ty, 0);
+		g_needPatch = new GlobalVariable(M, i8PtrTy, false, GlobalValue::ExternalLinkage, nullptr, "g_needPatch");
+	}
+
+	GlobalVariable* g_funcAddress = M.getGlobalVariable("g_funcAddress"); //void* g_funcAddress[]
+
 
 	// 给每个函数分配一个数字ID
-	unsigned funcID = 0;
+	int funcID = 0;
+
 	for (Function& F : M) {
 
 		if (F.empty())
@@ -247,8 +255,14 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 		// 在patchBB中插入patch逻辑
 		builder.SetInsertPoint(patchBB);
-		Value* g_test_val = builder.CreateLoad(IntegerType::getInt32Ty(context), g_test);
-		Value* cond = builder.CreateICmpNE(g_test_val, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 1)); //数值是0  1是测试数据
+		//Value* g_test_val = builder.CreateLoad(IntegerType::getInt32Ty(context), g_test);
+
+	// 获取g_needPatch[funcID]的值
+		Value* funcIDValue = builder.getInt32(funcID);
+		Value* needPatchPtr = builder.CreateGEP(IntegerType::getInt32Ty(context), g_needPatch, funcIDValue);
+		Value* needPatchValue = builder.CreateLoad(IntegerType::getInt32Ty(context), needPatchPtr);
+
+		Value* cond = builder.CreateICmpNE(needPatchValue, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0)); //数值是0  1是测试数据
 		BasicBlock* returnBB = BasicBlock::Create(Ctx, "callVMRet", &F);
 		builder.CreateCondBr(cond, returnBB, &entryBB);
 
@@ -272,6 +286,8 @@ bool helper::PatchFunctionCallVM(Module& M)
 		else {
 			builder.CreateRet(Constant::getNullValue(F.getReturnType()));
 		}
+
+		++funcID;
 	}
 
 	return true;
