@@ -13,6 +13,10 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/ADT/StringExtras.h"
 
 #include <iostream>
 #include <map>
@@ -37,6 +41,7 @@ namespace helper
 	bool BuildWrapperFunction(Module& module);
 	bool PatchFunctionCallVM(Module& module);
 	bool GatherFunctionUseGValue(Module& module);
+	bool CreateGetProcFunction(Module& module);
 } // namespace helper
 
 MkTestModulePass::MkTestModulePass() : OS(dbgs()) {}
@@ -91,9 +96,102 @@ PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 	changed &= helper::PatchFunctionCallVM(M);
 	changed &= helper::BuildWrapperFunction(M);
 			   helper::GatherFunctionUseGValue(M);
+			   helper::CreateGetProcFunction(M);
 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
+// 计算字符串的哈希值
+uint64_t hashFnv1a(const std::string& str) {
+	const uint64_t prime = 1099511628211u;
+	uint64_t hash = 14695981039346656037u;
+	for (char c : str) {
+		hash ^= static_cast<uint64_t>(c);
+		hash *= prime;
+	}
+	return hash;
+}
+
+bool isWrapperFunc(Function& F) {
+	// 获取函数的属性列表
+	AttributeList attrList = F.getAttributes();
+
+	// 获取名为"IsWrapperFunc"的属性
+	Attribute attr = attrList.getFnAttr("IsWrapperFunc");
+
+	// 检查属性是否存在
+	if (attr.isValid()) {
+		// 获取属性的值并将其转换为字符串
+		StringRef value = attr.getValueAsString();
+
+		// 判断值是否为1
+		return value == "1";
+	}
+
+	// 如果属性不存在，返回false
+	return false;
+}
+
+
+std::string getFunctionID(Function& F) {
+	// 获取函数的属性列表
+	AttributeList attrList = F.getAttributes();
+
+	// 获取名为"funcID"的属性
+	Attribute attr = attrList.getFnAttr("funcID");
+
+	// 检查属性是否存在
+	if (attr.isValid()) {
+		// 获取属性的值并将其转换为字符串
+		StringRef value = attr.getValueAsString();
+
+		// 返回属性值
+		return value.str();
+	}
+
+	// 如果属性不存在，返回空字符串
+	return "";
+}
+
+bool helper::CreateGetProcFunction(Module& M)
+{
+	errs() << "\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << M.getName() << "\n";
+
+	LLVMContext& context = M.getContext();
+
+	std::string filePath = M.getSourceFileName();
+	std::string fileName = llvm::sys::path::filename(filePath).str();
+
+	std::string funcName = "LQM_GetProc_" + fileName + "_" + llvm::utostr(hashFnv1a(fileName)).substr(0, 12);;
+
+	errs() << "start Create func: " << funcName ;
+
+	// 生成LQM_GetProc_fileName_hashID函数 int LQM_GetProc_fileName_hashID(void** guncAdd[]) 
+	FunctionType* funcType = FunctionType::get(Type::getInt32Ty(M.getContext()), { Type::getInt8PtrTy(M.getContext())->getPointerTo() }, false);
+	Function* LQM_GetProc = Function::Create(funcType, Function::ExternalLinkage, funcName, &M);
+
+	BasicBlock* entryBB = BasicBlock::Create(M.getContext(), "entry", LQM_GetProc);
+	IRBuilder<> builder(entryBB);
+
+	size_t funcID = 0;
+	for (Function& F : M) {
+
+		std::string origFuncName = F.getName().str();
+
+		if (isWrapperFunc(F) && !F.isDeclaration()) {
+
+			std::string origFuncName2 = F.getName().str();
+
+			Constant* funcAddress = ConstantExpr::getBitCast(&F, Type::getInt8PtrTy(M.getContext()));
+			Value* arrayElemPtr = builder.CreateConstGEP1_64(Type::getInt8PtrTy(M.getContext()), LQM_GetProc->getArg(0), funcID);
+			builder.CreateStore(funcAddress, arrayElemPtr);
+			++funcID;
+		}
+	}
+
+	builder.CreateRet(builder.getInt32(funcID));
+
+	return true;
+}
 
 bool helper::GatherFunctionUseGValue(Module& M)
 {
@@ -161,12 +259,36 @@ bool helper::PatchFunctionCallVM(Module& M)
 		g_needPatch = new GlobalVariable(M, i8PtrTy, false, GlobalValue::ExternalLinkage, nullptr, "g_needPatch");
 	}
 
-	GlobalVariable* g_funcAddress = M.getGlobalVariable("g_funcAddress"); //void* g_funcAddress[]
 
-	// 创建CallVm函数原型 bool CallVm(char* strFunName, void* pParameters, int paraCount, int funcID)    pParameters是栈上的原函数参数组成的数据
-	FunctionType* callVmType = FunctionType::get(Type::getInt1Ty(context), { Type::getInt8PtrTy(context), Type::getInt8PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
-	Function* callVmFunc = Function::Create(callVmType, GlobalValue::ExternalLinkage, "CallVm", M);
+	//// 获取或创建全局变量 g_funcAddress
+	//GlobalVariable* g_funcAddress = M.getGlobalVariable("g_funcAddress");
+	//if (!g_funcAddress) {
+	//	Type* voidPtrType = Type::getInt8PtrTy(context);
+	//	// Create the global variable g_funcAddress
+	//	g_funcAddress = new GlobalVariable(
+	//		M,
+	//		ArrayType::get(voidPtrType, M.getFunctionList().size()),
+	//		false,
+	//		GlobalValue::ExternalLinkage,
+	//		nullptr,
+	//		"g_funcAddress"
+	//	);
+	//}
 
+// 	GlobalVariable* g_funcAddress = M.getGlobalVariable("g_funcAddress");
+// 	Type* voidPtrTy = Type::getInt8PtrTy(M.getContext());
+// 	uint64_t numFunctions = M.size();
+// 	ArrayType* funcAddressArrayTy = ArrayType::get(voidPtrTy, numFunctions);
+// 	if (!g_funcAddress)
+// 	{
+// 		 g_funcAddress = new GlobalVariable(M, funcAddressArrayTy, false,
+// 			GlobalValue::ExternalLinkage, nullptr, "g_funcAddress");
+// 	}
+
+
+	// 创建CallVm函数原型 bool CallVm( /*char* strFunName,*/ void* pParameters, int paraCount, int funcID)    pParameters是栈上的原函数参数组成的数据
+	FunctionType* callVmType = FunctionType::get(Type::getInt1Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt8PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
+	Function* callVmFunc = Function::Create(callVmType, GlobalValue::ExternalLinkage, "LQCallVm", M);
 
 	// 给每个函数分配一个数字ID
 	int funcID = 0;
@@ -177,6 +299,30 @@ bool helper::PatchFunctionCallVM(Module& M)
 		{
 			continue;
 		}
+
+
+/////////////////////////////////////////////////////////////
+//{
+//			// 获取当前函数的地址
+//			Constant* funcAddr = ConstantExpr::getBitCast(&F, Type::getInt8PtrTy(context));
+//
+//			// 创建一个全局变量引用，用于初始化 g_funcs 的元素
+//			Constant* funcRef = ConstantExpr::getInBoundsGetElementPtr(g_funcAddress->getValueType(), g_funcAddress, { ConstantInt::get(Type::getInt32Ty(context), funcID) });
+//
+//			// 更新 g_funcs 的元素值为当前函数的地址
+//			//g_funcAddress->setInitializer(funcRef->getAggregateElement(0U)->getType()->getElementType(), funcRef->getAggregateElement(0U));
+//
+//	   // 将函数的地址存储在g_funcs数组的相应位置
+//			//g_funcAddress->setInitializer(ConstantArray::get(FuncPtrArrayTy, { ConstantExpr::getBitCast(&F, FuncPtrTy) }));
+//
+//			g_funcAddress->setInitializer(ConstantArray::get(funcAddressArrayTy, { funcPtr }));
+//
+//			// 为当前函数添加 funcID 属性
+//			F.addFnAttr("funcID", std::to_string(funcID));
+//}
+/////////////////////////////////////////////////////////////
+
+		F.addFnAttr("funcID", std::to_string(funcID));
 
 		std::string origFuncName = F.getName().str();
 		if (origFuncName == "CallVMFunction" || (origFuncName.npos != origFuncName.find("printf")) || (origFuncName.npos != origFuncName.find("main")))
@@ -237,10 +383,10 @@ bool helper::PatchFunctionCallVM(Module& M)
 		}
 
 		// 调用CallVm函数
-		Value* funcName = builder.CreateGlobalStringPtr(F.getName()); //// 获取当前函数名
+		//Value* funcName = builder.CreateGlobalStringPtr(F.getName()); //// 获取当前函数名
 		Value* ArgCount = builder.getInt32(args.size());
 		//Value* funcIDValue = builder.getInt32(funcID);
-		Value* callVmArgs[] = { funcName, paras, ArgCount, funcIDValue };
+		Value* callVmArgs[] = { /*funcName,*/ paras, ArgCount, funcIDValue };
 		builder.CreateCall(callVmType, callVmFunc, callVmArgs);
 
 		//return
@@ -280,10 +426,15 @@ bool helper::BuildWrapperFunction(Module& module)
 	{
 		errs() << "func:" << __FUNCTION__ << "  F:" << F->getName() << "\n";
 
-		if (F->isDeclaration())
+		if (F->isDeclaration() || F->isIntrinsic())
 		{
 			continue;
 		}
+
+		//F.addFnAttr("funcID", std::to_string(funcID));
+		std::string FuncId = getFunctionID(*F);
+
+		F->addFnAttr("funcID", FuncId);
 
 		LLVMContext& context = F->getContext();
 		Module* module = F->getParent();
@@ -302,6 +453,12 @@ bool helper::BuildWrapperFunction(Module& module)
 
 		// 在模块中创建新函数
 		Function* newFunc = Function::Create(newFuncType, Function::ExternalLinkage, newFuncName, module);
+
+
+		// 创建一个自定义属性，键为"IsWrapperFunc"，值为1
+		Attribute IsWrapperFuncAttr = Attribute::get(F->getContext(), "IsWrapperFunc", "1");
+		// 将自定义属性添加到函数
+		newFunc->addFnAttr(IsWrapperFuncAttr);
 
 		// 创建新函数的基本块
 		BasicBlock* entryBlock = BasicBlock::Create(context, "entry", newFunc);
