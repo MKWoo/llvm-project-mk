@@ -166,29 +166,58 @@ bool helper::CreateGetProcFunction(Module& M)
 	errs() << "start Create func: " << funcName ;
 
 	// Éú³ÉLQM_GetProc_fileName_hashIDº¯Êý int LQM_GetProc_fileName_hashID(void** guncAdd[]) 
+	//FunctionType* funcType = FunctionType::get(Type::getInt32Ty(M.getContext()), { Type::getInt8PtrTy(M.getContext())->getPointerTo() }, false);
+	//Function* LQM_GetProc = Function::Create(funcType, Function::ExternalLinkage, funcName, &M);
 	FunctionType* funcType = FunctionType::get(Type::getInt32Ty(M.getContext()), { Type::getInt8PtrTy(M.getContext())->getPointerTo() }, false);
 	Function* LQM_GetProc = Function::Create(funcType, Function::ExternalLinkage, funcName, &M);
 
+////
+	//BasicBlock* entryBB = BasicBlock::Create(M.getContext(), "entry", LQM_GetProc);
+	//IRBuilder<> builder(entryBB);
+
+	//size_t funcID = 0;
+	//for (Function& F : M) {
+
+	//	std::string origFuncName = F.getName().str();
+
+	//	if (isWrapperFunc(F) && !F.isDeclaration()) {
+
+	//		std::string origFuncName2 = F.getName().str();
+
+	//		Constant* funcAddress = ConstantExpr::getBitCast(&F, Type::getInt8PtrTy(M.getContext()));
+	//		Value* arrayElemPtr = builder.CreateConstGEP1_64(Type::getInt8PtrTy(M.getContext()), LQM_GetProc->getArg(0), funcID);
+	//		builder.CreateStore(funcAddress, arrayElemPtr);
+	//		++funcID;
+	//	}
+	//}
+
+	//builder.CreateRet(builder.getInt32(funcID));
+//////
 	BasicBlock* entryBB = BasicBlock::Create(M.getContext(), "entry", LQM_GetProc);
 	IRBuilder<> builder(entryBB);
 
+	Value* guncAddIsNull = builder.CreateIsNull(LQM_GetProc->getArg(0));
+	BasicBlock* returnCountBB = BasicBlock::Create(M.getContext(), "returnCount", LQM_GetProc);
+	BasicBlock* storeFuncsBB = BasicBlock::Create(M.getContext(), "storeFuncs", LQM_GetProc);
+
+	builder.CreateCondBr(guncAddIsNull, returnCountBB, storeFuncsBB);
+
+	builder.SetInsertPoint(storeFuncsBB);
 	size_t funcID = 0;
 	for (Function& F : M) {
-
-		std::string origFuncName = F.getName().str();
-
 		if (isWrapperFunc(F) && !F.isDeclaration()) {
-
-			std::string origFuncName2 = F.getName().str();
-
 			Constant* funcAddress = ConstantExpr::getBitCast(&F, Type::getInt8PtrTy(M.getContext()));
 			Value* arrayElemPtr = builder.CreateConstGEP1_64(Type::getInt8PtrTy(M.getContext()), LQM_GetProc->getArg(0), funcID);
 			builder.CreateStore(funcAddress, arrayElemPtr);
 			++funcID;
 		}
 	}
+	builder.CreateBr(returnCountBB);
 
+	builder.SetInsertPoint(returnCountBB);
 	builder.CreateRet(builder.getInt32(funcID));
+
+
 
 	return true;
 }
