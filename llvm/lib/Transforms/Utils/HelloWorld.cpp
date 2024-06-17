@@ -100,7 +100,7 @@ PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
-// ¼ÆËã×Ö·û´®µÄ¹şÏ£Öµ
+// è®¡ç®—å­—ç¬¦ä¸²çš„å“ˆå¸Œå€¼
 uint64_t hashFnv1a(const std::string& str) {
 	const uint64_t prime = 1099511628211u;
 	uint64_t hash = 14695981039346656037u;
@@ -112,43 +112,43 @@ uint64_t hashFnv1a(const std::string& str) {
 }
 
 bool isWrapperFunc(Function& F) {
-	// »ñÈ¡º¯ÊıµÄÊôĞÔÁĞ±í
+	// è·å–å‡½æ•°çš„å±æ€§åˆ—è¡¨
 	AttributeList attrList = F.getAttributes();
 
-	// »ñÈ¡ÃûÎª"IsWrapperFunc"µÄÊôĞÔ
+	// è·å–åä¸º"IsWrapperFunc"çš„å±æ€§
 	Attribute attr = attrList.getFnAttr("IsWrapperFunc");
 
-	// ¼ì²éÊôĞÔÊÇ·ñ´æÔÚ
+	// æ£€æŸ¥å±æ€§æ˜¯å¦å­˜åœ¨
 	if (attr.isValid()) {
-		// »ñÈ¡ÊôĞÔµÄÖµ²¢½«Æä×ª»»Îª×Ö·û´®
+		// è·å–å±æ€§çš„å€¼å¹¶å°†å…¶è½¬æ¢ä¸ºå­—ç¬¦ä¸²
 		StringRef value = attr.getValueAsString();
 
-		// ÅĞ¶ÏÖµÊÇ·ñÎª1
+		// åˆ¤æ–­å€¼æ˜¯å¦ä¸º1
 		return value == "1";
 	}
 
-	// Èç¹ûÊôĞÔ²»´æÔÚ£¬·µ»Øfalse
+	// å¦‚æœå±æ€§ä¸å­˜åœ¨ï¼Œè¿”å›false
 	return false;
 }
 
 
 std::string getFunctionID(Function& F) {
-	// »ñÈ¡º¯ÊıµÄÊôĞÔÁĞ±í
+	// è·å–å‡½æ•°çš„å±æ€§åˆ—è¡¨
 	AttributeList attrList = F.getAttributes();
 
-	// »ñÈ¡ÃûÎª"funcID"µÄÊôĞÔ
+	// è·å–åä¸º"funcID"çš„å±æ€§
 	Attribute attr = attrList.getFnAttr("funcID");
 
-	// ¼ì²éÊôĞÔÊÇ·ñ´æÔÚ
+	// æ£€æŸ¥å±æ€§æ˜¯å¦å­˜åœ¨
 	if (attr.isValid()) {
-		// »ñÈ¡ÊôĞÔµÄÖµ²¢½«Æä×ª»»Îª×Ö·û´®
+		// è·å–å±æ€§çš„å€¼å¹¶å°†å…¶è½¬æ¢ä¸ºå­—ç¬¦ä¸²
 		StringRef value = attr.getValueAsString();
 
-		// ·µ»ØÊôĞÔÖµ
+		// è¿”å›å±æ€§å€¼
 		return value.str();
 	}
 
-	// Èç¹ûÊôĞÔ²»´æÔÚ£¬·µ»Ø¿Õ×Ö·û´®
+	// å¦‚æœå±æ€§ä¸å­˜åœ¨ï¼Œè¿”å›ç©ºå­—ç¬¦ä¸²
 	return "";
 }
 
@@ -165,7 +165,7 @@ bool helper::CreateGetProcFunction(Module& M)
 
 	errs() << "start Create func: " << funcName ;
 
-	// Éú³ÉLQM_GetProc_fileName_hashIDº¯Êı int LQM_GetProc_fileName_hashID(void** guncAdd[]) 
+	// ç”ŸæˆLQM_GetProc_fileName_hashIDå‡½æ•° int LQM_GetProc_fileName_hashID(void** guncAdd[]) 
 	//FunctionType* funcType = FunctionType::get(Type::getInt32Ty(M.getContext()), { Type::getInt8PtrTy(M.getContext())->getPointerTo() }, false);
 	//Function* LQM_GetProc = Function::Create(funcType, Function::ExternalLinkage, funcName, &M);
 	FunctionType* funcType = FunctionType::get(Type::getInt32Ty(M.getContext()), { Type::getInt8PtrTy(M.getContext())->getPointerTo() }, false);
@@ -228,10 +228,10 @@ bool helper::GatherFunctionUseGValue(Module& M)
 
 	LLVMContext& context = M.getContext();
 
-	// »ñÈ¡º¯Êı×ÜÊıÁ¿
+	// è·å–å‡½æ•°æ€»æ•°é‡
 	unsigned maxFuncCount = M.getFunctionList().size();
 
-	// ¸øÃ¿¸öº¯Êı·ÖÅäÒ»¸öÊı×ÖID
+	// ç»™æ¯ä¸ªå‡½æ•°åˆ†é…ä¸€ä¸ªæ•°å­—ID
 	unsigned funcID = 0;
 	for (Function& F : M) {
 
@@ -240,13 +240,13 @@ bool helper::GatherFunctionUseGValue(Module& M)
 			continue;
 		}
 
-		// ´´½¨Ò»¸ö¼¯ºÏÀ´´æ´¢Ê¹ÓÃµÄÈ«¾Ö±äÁ¿
+		// åˆ›å»ºä¸€ä¸ªé›†åˆæ¥å­˜å‚¨ä½¿ç”¨çš„å…¨å±€å˜é‡
 		std::set<GlobalVariable*> usedGlobals;
 
 		for (BasicBlock& BB : F) {
 			for (Instruction& I : BB) {
 				if (auto* loadInst = dyn_cast<LoadInst>(&I)) {
-					// »ñÈ¡¼ÓÔØÖ¸ÁîÊ¹ÓÃµÄÈ«¾Ö±äÁ¿
+					// è·å–åŠ è½½æŒ‡ä»¤ä½¿ç”¨çš„å…¨å±€å˜é‡
 					Value* ptrOperand = loadInst->getPointerOperand();
 					if (auto* globalVar = dyn_cast<GlobalVariable>(ptrOperand)) {
 						usedGlobals.insert(globalVar);
@@ -255,7 +255,7 @@ bool helper::GatherFunctionUseGValue(Module& M)
 			}
 		}
 
-		// ´òÓ¡º¯ÊıÃûºÍÊ¹ÓÃµÄÈ«¾Ö±äÁ¿
+		// æ‰“å°å‡½æ•°åå’Œä½¿ç”¨çš„å…¨å±€å˜é‡
 		if (usedGlobals.size())
 		{
 			errs() << "In_func: " << F.getName() << "\n";
@@ -276,20 +276,20 @@ bool helper::PatchFunctionCallVM(Module& M)
 	LLVMContext& context = M.getContext();
 
 
-	// »ñÈ¡º¯Êı×ÜÊıÁ¿
+	// è·å–å‡½æ•°æ€»æ•°é‡
 	unsigned maxFuncCount = M.getFunctionList().size();
 
-	// »ñÈ¡È«¾Ö±äÁ¿g_needPatchºÍg_funcAddress
+	// è·å–å…¨å±€å˜é‡g_needPatchå’Œg_funcAddress
 	GlobalVariable* g_needPatch = M.getGlobalVariable("g_needPatch"); //char g_needPatch[]
 	if (!g_needPatch) {
-		// Èç¹ûg_needPatch²»´æÔÚ£¬ÔòÉùÃ÷Ò»¸öÍâ²¿È«¾Ö±äÁ¿
+		// å¦‚æœg_needPatchä¸å­˜åœ¨ï¼Œåˆ™å£°æ˜ä¸€ä¸ªå¤–éƒ¨å…¨å±€å˜é‡
 		Type* i8Ty = Type::getInt8Ty(M.getContext());
 		Type* i8PtrTy = PointerType::get(i8Ty, 0);
 		g_needPatch = new GlobalVariable(M, i8PtrTy, false, GlobalValue::ExternalLinkage, nullptr, "g_needPatch");
 	}
 
 
-	//// »ñÈ¡»ò´´½¨È«¾Ö±äÁ¿ g_funcAddress
+	//// è·å–æˆ–åˆ›å»ºå…¨å±€å˜é‡ g_funcAddress
 	//GlobalVariable* g_funcAddress = M.getGlobalVariable("g_funcAddress");
 	//if (!g_funcAddress) {
 	//	Type* voidPtrType = Type::getInt8PtrTy(context);
@@ -315,11 +315,11 @@ bool helper::PatchFunctionCallVM(Module& M)
 // 	}
 
 
-	// ´´½¨CallVmº¯ÊıÔ­ĞÍ bool CallVm( /*char* strFunName,*/ void* pParameters, int paraCount, int funcID)    pParametersÊÇÕ»ÉÏµÄÔ­º¯Êı²ÎÊı×é³ÉµÄÊı¾İ
+	// åˆ›å»ºCallVmå‡½æ•°åŸå‹ bool CallVm( /*char* strFunName,*/ void* pParameters, int paraCount, int funcID)    pParametersæ˜¯æ ˆä¸Šçš„åŸå‡½æ•°å‚æ•°ç»„æˆçš„æ•°æ®
 	FunctionType* callVmType = FunctionType::get(Type::getInt1Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt8PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
 	Function* callVmFunc = Function::Create(callVmType, GlobalValue::ExternalLinkage, "LQCallVm", M);
 
-	// ¸øÃ¿¸öº¯Êı·ÖÅäÒ»¸öÊı×ÖID
+	// ç»™æ¯ä¸ªå‡½æ•°åˆ†é…ä¸€ä¸ªæ•°å­—ID
 	int funcID = 0;
 
 	for (Function& F : M) {
@@ -332,21 +332,21 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 /////////////////////////////////////////////////////////////
 //{
-//			// »ñÈ¡µ±Ç°º¯ÊıµÄµØÖ·
+//			// è·å–å½“å‰å‡½æ•°çš„åœ°å€
 //			Constant* funcAddr = ConstantExpr::getBitCast(&F, Type::getInt8PtrTy(context));
 //
-//			// ´´½¨Ò»¸öÈ«¾Ö±äÁ¿ÒıÓÃ£¬ÓÃÓÚ³õÊ¼»¯ g_funcs µÄÔªËØ
+//			// åˆ›å»ºä¸€ä¸ªå…¨å±€å˜é‡å¼•ç”¨ï¼Œç”¨äºåˆå§‹åŒ– g_funcs çš„å…ƒç´ 
 //			Constant* funcRef = ConstantExpr::getInBoundsGetElementPtr(g_funcAddress->getValueType(), g_funcAddress, { ConstantInt::get(Type::getInt32Ty(context), funcID) });
 //
-//			// ¸üĞÂ g_funcs µÄÔªËØÖµÎªµ±Ç°º¯ÊıµÄµØÖ·
+//			// æ›´æ–° g_funcs çš„å…ƒç´ å€¼ä¸ºå½“å‰å‡½æ•°çš„åœ°å€
 //			//g_funcAddress->setInitializer(funcRef->getAggregateElement(0U)->getType()->getElementType(), funcRef->getAggregateElement(0U));
 //
-//	   // ½«º¯ÊıµÄµØÖ·´æ´¢ÔÚg_funcsÊı×éµÄÏàÓ¦Î»ÖÃ
+//	   // å°†å‡½æ•°çš„åœ°å€å­˜å‚¨åœ¨g_funcsæ•°ç»„çš„ç›¸åº”ä½ç½®
 //			//g_funcAddress->setInitializer(ConstantArray::get(FuncPtrArrayTy, { ConstantExpr::getBitCast(&F, FuncPtrTy) }));
 //
 //			g_funcAddress->setInitializer(ConstantArray::get(funcAddressArrayTy, { funcPtr }));
 //
-//			// Îªµ±Ç°º¯ÊıÌí¼Ó funcID ÊôĞÔ
+//			// ä¸ºå½“å‰å‡½æ•°æ·»åŠ  funcID å±æ€§
 //			F.addFnAttr("funcID", std::to_string(funcID));
 //}
 /////////////////////////////////////////////////////////////
@@ -366,13 +366,13 @@ bool helper::PatchFunctionCallVM(Module& M)
 		LLVMContext& Ctx = M->getContext();
 		IRBuilder<> builder(Ctx);
 
-		// »ñÈ¡µ±Ç°º¯ÊıµÄ²ÎÊı
+		// è·å–å½“å‰å‡½æ•°çš„å‚æ•°
 		std::vector<Value*> args;
 		for (auto& arg : F.args()) {
 			args.push_back(&arg);
 		}
 
-		// ´´½¨½á¹¹ÌåÀàĞÍ ParasÊÇ°Ñµ±Ç°º¯ÊıµÄ²ÎÊı±£´æµ½Ò»¸öÕ»½á¹¹ÌåÖĞ, ²»Í¬º¯Êı¿ÉÄÜ²»Ò»Ñù
+		// åˆ›å»ºç»“æ„ä½“ç±»å‹ Parasæ˜¯æŠŠå½“å‰å‡½æ•°çš„å‚æ•°ä¿å­˜åˆ°ä¸€ä¸ªæ ˆç»“æ„ä½“ä¸­, ä¸åŒå‡½æ•°å¯èƒ½ä¸ä¸€æ ·
 		StructType* structTy = StructType::create(F.getContext(), "Paras");
 		std::vector<Type*> structFields;
 		for (auto arg : args) {
@@ -381,38 +381,38 @@ bool helper::PatchFunctionCallVM(Module& M)
 		structTy->setBody(structFields);
 
 
-		// ÔÚÃ¿¸öº¯ÊıµÄÈë¿Ú»ù±¾¿éµÄ¿ªÊ¼´¦²åÈëÒ»¸öĞÂµÄ»ù±¾¿é
+		// åœ¨æ¯ä¸ªå‡½æ•°çš„å…¥å£åŸºæœ¬å—çš„å¼€å§‹å¤„æ’å…¥ä¸€ä¸ªæ–°çš„åŸºæœ¬å—
 		BasicBlock& entryBB = F.getEntryBlock();
 		BasicBlock* patchBB = BasicBlock::Create(Ctx, "patchBB", &F, &entryBB);
 
-		// ÔÚpatchBBÖĞ²åÈëpatchÂß¼­
+		// åœ¨patchBBä¸­æ’å…¥patché€»è¾‘
 		builder.SetInsertPoint(patchBB);
 		//Value* g_test_val = builder.CreateLoad(IntegerType::getInt32Ty(context), g_test);
 
-	// »ñÈ¡g_needPatch[funcID]µÄÖµ
+	// è·å–g_needPatch[funcID]çš„å€¼
 		Value* funcIDValue = builder.getInt32(funcID);
 		Value* needPatchPtr = builder.CreateGEP(IntegerType::getInt32Ty(context), g_needPatch, funcIDValue);
 		Value* needPatchValue = builder.CreateLoad(IntegerType::getInt32Ty(context), needPatchPtr);
 
-		Value* cond = builder.CreateICmpNE(needPatchValue, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0)); //ÊıÖµÊÇ0  1ÊÇ²âÊÔÊı¾İ
+		Value* cond = builder.CreateICmpNE(needPatchValue, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0)); //æ•°å€¼æ˜¯0  1æ˜¯æµ‹è¯•æ•°æ®
 		BasicBlock* returnBB = BasicBlock::Create(Ctx, "PatchBody", &F);
 		builder.CreateCondBr(cond, returnBB, &entryBB);
 
 //PatchBody
-		// ÔÚPatchBodyÖĞ²åÈëµ÷ÓÃcallµÄÖ¸ÁîºÍ·µ»ØÖ¸Áî
+		// åœ¨PatchBodyä¸­æ’å…¥è°ƒç”¨callçš„æŒ‡ä»¤å’Œè¿”å›æŒ‡ä»¤
 		builder.SetInsertPoint(returnBB);
 		//builder.CreateCall(callVmFunc);
 
-		//patch Âß¼­
-		// ´´½¨½á¹¹ÌåÊµÀı²¢³õÊ¼»¯
+		//patch é€»è¾‘
+		// åˆ›å»ºç»“æ„ä½“å®ä¾‹å¹¶åˆå§‹åŒ–
 		Value* paras = builder.CreateAlloca(structTy);
 		for (size_t i = 0; i < args.size(); ++i) {
 			Value* field = builder.CreateStructGEP(structTy, paras, i);
 			builder.CreateStore(args[i], field);
 		}
 
-		// µ÷ÓÃCallVmº¯Êı
-		//Value* funcName = builder.CreateGlobalStringPtr(F.getName()); //// »ñÈ¡µ±Ç°º¯ÊıÃû
+		// è°ƒç”¨CallVmå‡½æ•°
+		//Value* funcName = builder.CreateGlobalStringPtr(F.getName()); //// è·å–å½“å‰å‡½æ•°å
 		Value* ArgCount = builder.getInt32(args.size());
 		//Value* funcIDValue = builder.getInt32(funcID);
 		Value* callVmArgs[] = { /*funcName,*/ paras, ArgCount, funcIDValue };
@@ -426,7 +426,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 			builder.CreateRet(Constant::getNullValue(F.getReturnType()));
 		}
 
-		//patch Âß¼­
+		//patch é€»è¾‘
 //PatchBody
 
 		++funcID;
@@ -442,15 +442,15 @@ bool helper::BuildWrapperFunction(Module& module)
 	errs()<<"\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << module.getName() << "\n";
 	//auto& context = module.getContext();
 
-	// ´´½¨º¯ÊıÁĞ±í
+	// åˆ›å»ºå‡½æ•°åˆ—è¡¨
 	std::vector<Function*> functionList;
 
-	// ±éÀúÄ£¿éÖĞµÄËùÓĞº¯Êı£¬²¢½«ÆäÌí¼Óµ½º¯ÊıÁĞ±íÖĞ
+	// éå†æ¨¡å—ä¸­çš„æ‰€æœ‰å‡½æ•°ï¼Œå¹¶å°†å…¶æ·»åŠ åˆ°å‡½æ•°åˆ—è¡¨ä¸­
 	for (Function& F : module) {
 		functionList.push_back(&F);
 	}
 
-	// ±éÀúº¯ÊıÁĞ±í²¢´¦ÀíÃ¿¸öº¯Êı
+	// éå†å‡½æ•°åˆ—è¡¨å¹¶å¤„ç†æ¯ä¸ªå‡½æ•°
 	for (Function* F : functionList) 
 	{
 		errs() << "func:" << __FUNCTION__ << "  F:" << F->getName() << "\n";
@@ -468,38 +468,38 @@ bool helper::BuildWrapperFunction(Module& module)
 		LLVMContext& context = F->getContext();
 		Module* module = F->getParent();
 
-		// »ñÈ¡Ô­º¯ÊıµÄÃû³Æ
+		// è·å–åŸå‡½æ•°çš„åç§°
 		std::string origFuncName = F->getName().str();
 
-		// ´´½¨ĞÂº¯ÊıÃû³Æ
+		// åˆ›å»ºæ–°å‡½æ•°åç§°
 		std::string newFuncName = origFuncName + "_UE";
 
-		// »ñÈ¡Ô­º¯ÊıµÄÀàĞÍ
+		// è·å–åŸå‡½æ•°çš„ç±»å‹
 		FunctionType* origFuncType = F->getFunctionType();
 
-		// ´´½¨ĞÂº¯ÊıÀàĞÍ
+		// åˆ›å»ºæ–°å‡½æ•°ç±»å‹
 		FunctionType* newFuncType = FunctionType::get(Type::getInt8PtrTy(context), { Type::getInt8PtrTy(context), Type::getInt8PtrTy(context), Type::getInt64PtrTy(context), Type::getInt8PtrTy(context) }, false);
 
-		// ÔÚÄ£¿éÖĞ´´½¨ĞÂº¯Êı
+		// åœ¨æ¨¡å—ä¸­åˆ›å»ºæ–°å‡½æ•°
 		Function* newFunc = Function::Create(newFuncType, Function::ExternalLinkage, newFuncName, module);
 
 
-		// ´´½¨Ò»¸ö×Ô¶¨ÒåÊôĞÔ£¬¼üÎª"IsWrapperFunc"£¬ÖµÎª1
+		// åˆ›å»ºä¸€ä¸ªè‡ªå®šä¹‰å±æ€§ï¼Œé”®ä¸º"IsWrapperFunc"ï¼Œå€¼ä¸º1
 		Attribute IsWrapperFuncAttr = Attribute::get(F->getContext(), "IsWrapperFunc", "1");
-		// ½«×Ô¶¨ÒåÊôĞÔÌí¼Óµ½º¯Êı
+		// å°†è‡ªå®šä¹‰å±æ€§æ·»åŠ åˆ°å‡½æ•°
 		newFunc->addFnAttr(IsWrapperFuncAttr);
 
-		// ´´½¨ĞÂº¯ÊıµÄ»ù±¾¿é
+		// åˆ›å»ºæ–°å‡½æ•°çš„åŸºæœ¬å—
 		BasicBlock* entryBlock = BasicBlock::Create(context, "entry", newFunc);
 		IRBuilder<> builder(entryBlock);
 
-		// »ñÈ¡ĞÂº¯ÊıµÄ²ÎÊı
+		// è·å–æ–°å‡½æ•°çš„å‚æ•°
 		Argument* runtimeArg = &*newFunc->arg_begin();
 		Argument* ctxArg = &*(newFunc->arg_begin() + 1);
 		Argument* spArg = &*(newFunc->arg_begin() + 2);
 		Argument* memArg = &*(newFunc->arg_begin() + 3);
 
-		// ¸ù¾İµ±Ç°º¯ÊıµÄ²ÎÊı¸öÊı´Ó _sp Ö¸Õë»ñÈ¡²ÎÊıÖµ
+		// æ ¹æ®å½“å‰å‡½æ•°çš„å‚æ•°ä¸ªæ•°ä» _sp æŒ‡é’ˆè·å–å‚æ•°å€¼
 		unsigned paramCount = F->arg_size();
 		std::vector<Value*> params;
 		for (unsigned i = 0; i < paramCount; ++i) {
@@ -512,10 +512,10 @@ bool helper::BuildWrapperFunction(Module& module)
 			params.push_back(param);
 		}
 
-		// µ÷ÓÃÔ­º¯Êı
+		// è°ƒç”¨åŸå‡½æ•°
 		Value* callResult = builder.CreateCall(F, params);
 
-		// ´´½¨·µ»ØÖ¸Áî
+		// åˆ›å»ºè¿”å›æŒ‡ä»¤
 		//builder.CreateRet(callResult);
 		builder.CreateRet(ConstantPointerNull::get(Type::getInt8PtrTy(context)));
 	}
