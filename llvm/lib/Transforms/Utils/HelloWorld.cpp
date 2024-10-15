@@ -18,6 +18,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/ADT/StringExtras.h"
 
+
 #include <iostream>
 #include <map>
 
@@ -38,6 +39,7 @@ namespace helper
 	Constant* CreateGlobalVariable(Module& module, StringRef globalVariableName);
 	bool CountFunctionCallsInModule(Module& module);
 
+	bool Collect_NativeAddr(Module& module);
 	bool BuildWrapperFunction(Module& module);
 	bool PatchFunctionCallVM(Module& module);
 	bool GatherFunctionUseGValue(Module& module);
@@ -90,13 +92,16 @@ PreservedAnalyses MkTestModulePass::TestRun(Module& M, ModuleAnalysisManager& AM
 
 PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 
-	errs() << "*******Enter " << __FUNCTION__ << "  *******  M:"<<M.getName() << "\n";
+	errs() << "####### Start_IR_handle " << __FUNCTION__ << "  #######  M:"<<M.getName() << "\n";
 
 	bool changed = true;
 	changed &= helper::PatchFunctionCallVM(M);
-	changed &= helper::BuildWrapperFunction(M);
-			   helper::GatherFunctionUseGValue(M);
-			   helper::CreateGetProcFunction(M);
+	changed &= helper::Collect_NativeAddr(M);
+// 	changed &= helper::BuildWrapperFunction(M);
+// 			   helper::GatherFunctionUseGValue(M);
+// 			   helper::CreateGetProcFunction(M);
+
+	errs() << "####### End_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() << "\n";
 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
@@ -109,6 +114,21 @@ uint64_t hashFnv1a(const std::string& str) {
 		hash *= prime;
 	}
 	return hash;
+}
+
+
+
+std::string hashFnv1aStr(const std::string& str) {
+	const uint64_t prime = 1099511628211u;
+	uint64_t hash = 14695981039346656037u;
+	for (char c : str) {
+		hash ^= static_cast<uint64_t>(c);
+		hash *= prime;
+	}
+
+	std::string strHash = std::to_string(hash);
+
+	return strHash;
 }
 
 bool isWrapperFunc(Function& F) {
@@ -283,9 +303,9 @@ bool helper::PatchFunctionCallVM(Module& M)
 	GlobalVariable* g_needPatch = M.getGlobalVariable("g_needPatch"); //char g_needPatch[]
 	if (!g_needPatch) {
 		// 如果g_needPatch不存在，则声明一个外部全局变量
-		Type* i8Ty = Type::getInt8Ty(M.getContext());
-		Type* i8PtrTy = PointerType::get(i8Ty, 0);
-		g_needPatch = new GlobalVariable(M, i8PtrTy, false, GlobalValue::ExternalLinkage, nullptr, "g_needPatch");
+		Type* i32Ty = Type::getInt32Ty(M.getContext());
+		Type* i32PtrTy = PointerType::get(i32Ty, 0);
+		g_needPatch = new GlobalVariable(M, i32PtrTy, false, GlobalValue::ExternalLinkage, nullptr, "g_needPatch");
 	}
 
 
@@ -316,7 +336,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 
 	// 创建CallVm函数原型 bool CallVm( /*char* strFunName,*/ void* pParameters, int paraCount, int funcID)    pParameters是栈上的原函数参数组成的数据
-	FunctionType* callVmType = FunctionType::get(Type::getInt1Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt8PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
+	FunctionType* callVmType = FunctionType::get(Type::getInt32Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt64PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
 	Function* callVmFunc = Function::Create(callVmType, GlobalValue::ExternalLinkage, "LQCallVm", M);
 
 	// 给每个函数分配一个数字ID
@@ -395,6 +415,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 		Value* needPatchValue = builder.CreateLoad(IntegerType::getInt32Ty(context), needPatchPtr);
 
 		Value* cond = builder.CreateICmpNE(needPatchValue, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0)); //数值是0  1是测试数据
+		//Value* cond = builder.CreateICmpNE(needPatchValue, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0x12345678)); //数值是0  1是测试数据
 		BasicBlock* returnBB = BasicBlock::Create(Ctx, "PatchBody", &F);
 		builder.CreateCondBr(cond, returnBB, &entryBB);
 
@@ -435,10 +456,151 @@ bool helper::PatchFunctionCallVM(Module& M)
 	return true;
 }
 
+//void * func_UE(IM3Runtime runtime, IM3ImportContext _ctx, uint64_t * _sp,  void * _mem)
+bool Collect_NativeAddrXXXXX(Module& M)
+{
+
+	errs() << "\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << M.getName() << "\n";
+	//auto& context = module.getContext();
+
+
+// 	ArrayType* arrayType = ArrayType::get(Type::getInt8PtrTy(M.getContext()), M.size());
+// 	GlobalVariable* globalArray = new GlobalVariable(M, arrayType, false, GlobalValue::ExternalLinkage, nullptr, "function_addresses");
+// 
+// 	// 记录所有函数的地址
+// 	int idx = 0;
+// 	for (Function& F : M) {
+// 		if (F.isDeclaration()) continue;
+// 
+// 		// 在函数入口点插入代码
+// 		BasicBlock& entryBlock = F.getEntryBlock();
+// 		IRBuilder<> builder(&entryBlock, entryBlock.getFirstInsertionPt());
+// 
+// 		// 获取函数地址
+// 		Value* funcAddr = builder.CreateBitCast(&F, Type::getInt8PtrTy(M.getContext()));
+// 
+// 		// 将函数地址存储到全局数组中
+// 		ConstantInt* funcId = builder.getInt32(idx/*F.getFunctionNumber()*/);
+// 		Value* gepIndices[] = { builder.getInt32(0), funcId };
+// 		Value* arrayElemPtr = builder.CreateGEP(IntegerType::getInt8PtrTy(M.getContext()), globalArray, ArrayRef<Value*>(gepIndices));
+// 		builder.CreateStore(funcAddr, arrayElemPtr);
+// 
+// 		++idx;
+// 	}
+
+
+	std::string FileHash = hashFnv1aStr(M.getSourceFileName()); // Assume this function computes the file hash
+	std::string InitFuncName = "init_file_" + FileHash;
+
+// 	// Create the global arrays
+// 	GlobalVariable* FunctionAddrArray = new GlobalVariable(
+// 		M, PointerType::get(Type::getInt8PtrTy(M.getContext()), 0), false, GlobalValue::InternalLinkage,
+// 		ConstantAggregateZero::get(ArrayType::get(Type::getInt8PtrTy(M.getContext()), 1024)), "g_functionAddr");
+
+	ArrayType* arrayType = ArrayType::get(Type::getInt8PtrTy(M.getContext()), M.size());
+	GlobalVariable* FunctionAddrArray = new GlobalVariable(M, arrayType, false, GlobalValue::ExternalLinkage, nullptr, "function_addresses");
+
+// 	GlobalVariable* GlobalVarAddrArray = new GlobalVariable(
+// 		M, PointerType::get(Type::getInt8PtrTy(M.getContext()), 0), false, GlobalValue::InternalLinkage,
+// 		ConstantAggregateZero::get(ArrayType::get(Type::getInt8PtrTy(M.getContext()), 1024)), "g_gvarAddr");
+
+	//ArrayType* arrayType = ArrayType::get(Type::getInt8PtrTy(M.getContext()), M.size());
+// 
+	//GlobalVariable* GlobalVarAddrArray = new GlobalVariable(M, arrayType, false, GlobalValue::ExternalLinkage, nullptr, "g_gvarAddr");
+
+	// Create the init function
+	FunctionType* FuncType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+	Function* InitFunc = Function::Create(FuncType, GlobalValue::InternalLinkage, InitFuncName, &M);
+
+	BasicBlock* EntryBB = BasicBlock::Create(M.getContext(), "entry", InitFunc);
+	IRBuilder<> Builder(EntryBB);
+
+	// Collect function addresses
+	int FunctionId = 0;
+	for (Function& F : M) {
+		if (!F.isDeclaration()) {
+
+//  			Value* funcAddr = Builder.CreateBitCast(&F, Type::getInt8PtrTy(M.getContext()));
+// 			ConstantInt* FunctionId = Builder.getInt32(FunctionId/*F.getFunctionNumber()*/);
+// 			Value* gepIndices[] = { Builder.getInt32(0), FunctionId };
+// 			Builder.CreateStore(funcAddr, Builder.CreateGEP(IntegerType::getInt8PtrTy(M.getContext()), FunctionAddrArray, ArrayRef<Value*>(gepIndices)));
+
+ 		// 将函数地址存储到全局数组中
+		Value* funcAddr = Builder.CreateBitCast(&F, Type::getInt8PtrTy(M.getContext()));
+ 		ConstantInt* funcId = Builder.getInt32(FunctionId/*F.getFunctionNumber()*/);
+ 		Value* gepIndices[] = { Builder.getInt32(0), funcId };
+ 		Value* arrayElemPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(M.getContext()), FunctionAddrArray, ArrayRef<Value*>(gepIndices));
+		Builder.CreateStore(funcAddr, arrayElemPtr);
+
+
+			FunctionId++;
+		}
+	}
+
+	// Collect global variable addresses
+// 	int GlobalVarId = 0;
+// 	for (GlobalVariable& GV : M.globals()) {
+// 		if (!GV.isDeclaration()) {
+// 			Value* gepIndices[] = { Builder.getInt32(0), GlobalVarId };
+// 			Builder.CreateStore(GV.getLocation(), Builder.CreateGEP(IntegerType::getInt8PtrTy(M.getContext()), GlobalVarAddrArray, ArrayRef<Value*>(gepIndices)));
+// 			GlobalVarId++;
+// 		}
+// 	}
+
+	Builder.CreateRetVoid();
+
+	return true;
+}
+
+// std::string FileHash = hashFnv1aStr(M.getSourceFileName()); // Assume this function computes the file hash
+// std::string initFunctionName = "init_file_" + FileHash;
+
+//function_addresses
+// 
+
+//void * func_UE(IM3Runtime runtime, IM3ImportContext _ctx, uint64_t * _sp,  void * _mem)
+bool helper::Collect_NativeAddr(Module& M)
+{
+	errs() << "\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << M.getName() << "\n";
+
+
+	ArrayType* arrayType = ArrayType::get(Type::getInt8PtrTy(M.getContext()), M.size());
+	GlobalVariable* FunctionAddresses = new GlobalVariable(M, arrayType, false, GlobalValue::ExternalLinkage, nullptr, "function_addresses");
+
+
+	// Create the init_file_test function
+	FunctionType* FuncType = FunctionType::get(Type::getVoidTy(M.getContext()), {}, false);
+
+	 std::string FileHash = hashFnv1aStr(M.getSourceFileName()); // Assume this function computes the file hash
+	 std::string initFunctionName = "MinkeeTest_init_file_" + FileHash;
+	Function* InitFileTestFunc = Function::Create(FuncType, GlobalValue::ExternalLinkage, initFunctionName, &M);
+
+	// Generate code to store function addresses in the global array
+	BasicBlock* EntryBB = BasicBlock::Create(M.getContext(), "entry", InitFileTestFunc);
+	IRBuilder<> Builder(EntryBB);
+	int Idx = 0;
+	for (Function& F : M) {
+		if (!F.isDeclaration()) {
+			Value* FuncAddr = Builder.CreateBitCast(&F, IntegerType::getInt64PtrTy(M.getContext()));
+			Value* ArrayIdx = ConstantInt::get(Type::getInt32Ty(M.getContext()), Idx++);
+			Value* ArrayPtr = Builder.CreateGEP(IntegerType::getInt64PtrTy(M.getContext()), FunctionAddresses, ArrayIdx);
+			Builder.CreateStore(FuncAddr, ArrayPtr);
+			errs() << "\n" << "Collect_function: " <<  F.getName() << "\n";
+		}
+	}
+
+	// Return void from the init_file_test function
+	Builder.CreateRetVoid();
+
+	return true; // Indicate that the module was modified
+
+}
+
 
 //void * func_UE(IM3Runtime runtime, IM3ImportContext _ctx, uint64_t * _sp,  void * _mem)
 bool helper::BuildWrapperFunction(Module& module)
 {
+
 	errs()<<"\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << module.getName() << "\n";
 	//auto& context = module.getContext();
 
@@ -478,7 +640,7 @@ bool helper::BuildWrapperFunction(Module& module)
 		FunctionType* origFuncType = F->getFunctionType();
 
 		// 创建新函数类型
-		FunctionType* newFuncType = FunctionType::get(Type::getInt8PtrTy(context), { Type::getInt8PtrTy(context), Type::getInt8PtrTy(context), Type::getInt64PtrTy(context), Type::getInt8PtrTy(context) }, false);
+		FunctionType* newFuncType = FunctionType::get(Type::getInt64PtrTy(context), { Type::getInt64PtrTy(context), Type::getInt64PtrTy(context), Type::getInt64PtrTy(context), Type::getInt64PtrTy(context) }, false);
 
 		// 在模块中创建新函数
 		Function* newFunc = Function::Create(newFuncType, Function::ExternalLinkage, newFuncName, module);
