@@ -43,9 +43,6 @@ namespace helper
 	bool CreateCollectAddressFunction(Module& module);
 	bool Create_Init_Module_Function(Module& module);
 
-	bool CountFunctionCallsInModule(Module& module);
-	bool BuildWrapperFunction(Module& module);
-	bool GatherFunctionUseGValue(Module& module);
 
 } // namespace helper
 
@@ -125,93 +122,52 @@ PreservedAnalyses MkTestModulePass::TestRun(Module& M, ModuleAnalysisManager& AM
 
 	errs() << "minkee func: " << __FUNCTION__ << M.getName()<< "\n";
 
-	bool changed = helper::CountFunctionCallsInModule(M);
-	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+// 	bool changed = helper::CountFunctionCallsInModule(M);
+// 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+
+	return PreservedAnalyses::all();
 
 }
 
 
 
 uint64_t g_ModueHashForPatch = 0;
-int  g_needPatchFuncCount =0;
+uint32_t  g_needPatchFuncCount =0;
+uint32_t  g_AddressCollectedCount = 0; //收集的函数/全局变量地址  总个数，这个个数会写到结构体，注册module。 引擎new g_AddressCollectedCount个对象的数组，然后回调回来，进行收集
+
+#define _str_LQCallVm "LQCallVm"
+
 #define __str_g_needpatch_lqcppReload "g_needpatch_lqcppReload_"
 #define __str_CollectAddressFunction "CollectAddressFunction_"
 
 PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
-
-	errs() << "####### Start_IR_handle " << __FUNCTION__ << "  #######  M:"<<M.getName() << "\n";
-
 	std::string input_str =  M.getSourceFileName();
 
 	// 使用 CityHash64 计算 64 位哈希值
 	g_ModueHashForPatch = CityHash64(input_str.c_str(), input_str.size());
 
+	errs() << "####### Start_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() <<"  moduleHash:" << g_ModueHashForPatch <<"\n";
+
 	bool changed = true;
 	changed &= helper::PatchFunctionCallVM(M);
-	changed &= helper::CreateCollectAddressFunction(M);
+	//changed &= helper::CreateCollectAddressFunction(M);
 	changed &= helper::Create_Init_Module_Function(M);
 // 	changed &= helper::BuildWrapperFunction(M);
-// 			   helper::GatherFunctionUseGValue(M);
 // 			   helper::CreateGetProcFunction(M);
 
-	errs() << "####### End_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() << "\n";
+	errs() << "\n" << "####### End_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() << "\n\n\n";
 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
 
 
 
-bool helper::GatherFunctionUseGValue(Module& M)
-{
-	errs() << "\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << M.getName() << "\n";
-
-	LLVMContext& context = M.getContext();
-
-	// 获取函数总数量
-	unsigned maxFuncCount = M.getFunctionList().size();
-
-	// 给每个函数分配一个数字ID
-	unsigned funcID = 0;
-	for (Function& F : M) {
-
-		if (F.empty())
-		{
-			continue;
-		}
-
-		// 创建一个集合来存储使用的全局变量
-		std::set<GlobalVariable*> usedGlobals;
-
-		for (BasicBlock& BB : F) {
-			for (Instruction& I : BB) {
-				if (auto* loadInst = dyn_cast<LoadInst>(&I)) {
-					// 获取加载指令使用的全局变量
-					Value* ptrOperand = loadInst->getPointerOperand();
-					if (auto* globalVar = dyn_cast<GlobalVariable>(ptrOperand)) {
-						usedGlobals.insert(globalVar);
-					}
-				}
-			}
-		}
-
-		// 打印函数名和使用的全局变量
-		if (usedGlobals.size())
-		{
-			errs() << "In_func: " << F.getName() << "\n";
-			for (GlobalVariable* globalVar : usedGlobals) {
-				errs() << "  Used Global Variable: " << globalVar->getName() << "\n";
-			}
-			errs() << "\n";
-		}
-	}
-
-	return true;
-}
-
+// 给每个函数分配一个数字ID //整个module里面的函数id是基于g_funcID递增的
+int g_funcID = 0;
 
 bool helper::PatchFunctionCallVM(Module& M)
 {
-	errs() << "\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << M.getName() <<  "ModuleHash:" <<g_ModueHashForPatch<<"\n";
+	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << " moduleHash:" << g_ModueHashForPatch <<"\n";
 	LLVMContext& context = M.getContext();
 
 
@@ -223,61 +179,38 @@ bool helper::PatchFunctionCallVM(Module& M)
 		}
 	}
 
-	g_needPatchFuncCount = patchFuncCount;
+	g_needPatchFuncCount = patchFuncCount; //g_needPatchFuncCount会再ini 函数，进行注册时用到
 
-	// 获取全局变量g_needPatch和g_funcAddress
-// 	GlobalVariable* g_needPatch = M.getGlobalVariable("g_needPatch"); //char g_needPatch[]
-// 	if (!g_needPatch) {
-// 		// 如果g_needPatch不存在，则声明一个外部全局变量
-// 		Type* i32Ty = Type::getInt32Ty(M.getContext());
-// 		Type* i32PtrTy = PointerType::get(i32Ty, 0);
-// 		g_needPatch = new GlobalVariable(M, i32PtrTy, false, GlobalValue::ExternalLinkage, nullptr, "g_needPatch");
-// 	}
+	 // Step 2: Create a global boolean array:   char g_needPatch[g_needPatchFuncCount] = {0};  //ConstantAggregateZero init to 0
+	Type* Bytetype = Type::getInt8Ty(M.getContext());
+	ArrayType* arrayType = ArrayType::get(Bytetype, patchFuncCount);
 
-	 // Step 2: Create a global boolean array
-	Type* boolType = Type::getInt1Ty(M.getContext());
-	ArrayType* arrayType = ArrayType::get(boolType, patchFuncCount);
-	GlobalVariable* g_needPatch = new GlobalVariable(
+	GlobalVariable* g_needPatch_bool_array = new GlobalVariable(
 		M, arrayType, false, GlobalValue::InternalLinkage, ConstantAggregateZero::get(arrayType),
 		__str_g_needpatch_lqcppReload + std::to_string(g_ModueHashForPatch));
 
-// 	// 创建全局布尔数组
-// 	if (FuncCount > 0) {
-// 		ArrayType* ArrayTy = ArrayType::get(Type::getInt1Ty(Context), FuncCount);
-// 		GlobalVariable* GlobalArray = new GlobalVariable(
-// 			M, ArrayTy, false, GlobalValue::InternalLinkage,
-// 			Constant::getNullValue(ArrayTy), "g_needPatch");
-// 	}
-
 	// 创建CallVm函数原型 bool CallVm( /*char* strFunName,*/ void* pParameters, int paraCount, int funcID)    pParameters是栈上的原函数参数组成的数据
 	FunctionType* callVmType = FunctionType::get(Type::getInt32Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt64PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
-	Function* callVmFunc = Function::Create(callVmType, GlobalValue::ExternalLinkage, "LQCallVm", M);
-
-	// 给每个函数分配一个数字ID
-	int funcID = 0;
+	Function* callVmFunc = Function::Create(callVmType, GlobalValue::ExternalLinkage, _str_LQCallVm, M);
 
 	for (Function& F : M) {
 
-		if (F.empty())
+		if (F.empty() || F.isDeclaration())
 		{
+			errs() << "skip_func:" << F.getName() << "\n";
 			continue;
 		}
 
-		if (F.isDeclaration())
-		{
-			continue;
-		}
-
-		F.addFnAttr("funcID", std::to_string(funcID));
+		F.addFnAttr("funcID", std::to_string(g_funcID));
 
 		std::string origFuncName = F.getName().str();
 		if (origFuncName == "CallVMFunction" || (origFuncName.npos != origFuncName.find("printf")) || (origFuncName.npos != origFuncName.find("main")))
 		{
-			errs() << "In_func:" << __FUNCTION__ << "  skip:" << origFuncName << "\n";
+			errs() << "skip by name func:" << origFuncName << "\n";
 			continue;
 		}
 
-		errs() << "In_func:" << __FUNCTION__ << " **handle** f:" << origFuncName << "\n";
+		errs() << "patch_function id:" << g_funcID << "  Name:"<< origFuncName << "\n";
 
 		Module* M = F.getParent();
 		LLVMContext& Ctx = M->getContext();
@@ -306,12 +239,12 @@ bool helper::PatchFunctionCallVM(Module& M)
 		builder.SetInsertPoint(patchBB);
 		//Value* g_test_val = builder.CreateLoad(IntegerType::getInt32Ty(context), g_test);
 
-	// 获取g_needPatch[funcID]的值
-		Value* funcIDValue = builder.getInt32(funcID);
-		Value* needPatchPtr = builder.CreateGEP(IntegerType::getInt32Ty(context), g_needPatch, funcIDValue);
-		Value* needPatchValue = builder.CreateLoad(IntegerType::getInt32Ty(context), needPatchPtr);
+	// 获取g_needPatch_bool_array[funcID]的值
+		Value* funcIDValue = builder.getInt32(g_funcID);
+		Value* needPatchPtr = builder.CreateGEP(IntegerType::getInt8Ty(context), g_needPatch_bool_array, funcIDValue);
+		Value* needPatchValue = builder.CreateLoad(IntegerType::getInt8Ty(context), needPatchPtr);
 
-		Value* cond = builder.CreateICmpNE(needPatchValue, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0)); //数值是0  1是测试数据
+		Value* cond = builder.CreateICmpNE(needPatchValue, ConstantInt::get(IntegerType::getInt8Ty(Ctx), 0)); //数值是0  1是测试数据
 		//Value* cond = builder.CreateICmpNE(needPatchValue, ConstantInt::get(IntegerType::getInt32Ty(Ctx), 0x12345678)); //数值是0  1是测试数据
 		BasicBlock* returnBB = BasicBlock::Create(Ctx, "PatchBody", &F);
 		builder.CreateCondBr(cond, returnBB, &entryBB);
@@ -322,7 +255,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 		//builder.CreateCall(callVmFunc);
 
 		//patch 逻辑
-		// 创建结构体实例并初始化
+		// 创建参数结构体实例并初始化
 		Value* paras = builder.CreateAlloca(structTy);
 		for (size_t i = 0; i < args.size(); ++i) {
 			Value* field = builder.CreateStructGEP(structTy, paras, i);
@@ -347,16 +280,49 @@ bool helper::PatchFunctionCallVM(Module& M)
 		//patch 逻辑
 //PatchBody
 
-		++funcID;
+		++g_funcID;
 	}
-
+	errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << "\n";
 	return true;
 }
 
-//生成函数 void CollectAddressFunction(void* pAddrTable) ;这个函数外部调用，获取收集的函数和变量地址
+//collect address
+enum emCollectType
+{
+	em_type_function =0,
+	em_type_globalValue = 1,
+};
+
+
+struct CollectItemInfo
+{
+	uint32_t collectIndex = 0; //在数组的存放index，调用Builder.CreateStore时index +1
+	uint32_t collectType = 0; //函数或全局变量
+
+	CollectItemInfo():collectIndex(0) ,collectType(0)
+	{}
+	CollectItemInfo(const CollectItemInfo& other):collectIndex(other.collectIndex) ,collectType(other.collectType)
+	{}
+	CollectItemInfo(uint32_t collectIndex_in, uint32_t collectType_in):collectIndex(collectIndex_in),collectType(collectType_in)
+	{}
+};
+
+std::map<std::string, CollectItemInfo> g_mapCollectAddressData;
+
+bool IsFuncNameCollected(const llvm::StringRef& funcName)
+{
+	if (g_mapCollectAddressData.find(funcName.data()) != g_mapCollectAddressData.end())
+	{
+		return true;
+	}
+
+	return false;
+}
+
+//生成函数 void CollectAddressFunction_moduleHash(void* pAddrTable) ;这个函数外部调用，获取收集的函数和变量地址
 bool helper::CreateCollectAddressFunction(Module& M)
 {
-	errs() << "Enter_func:" << __FUNCTION__  << M.getName() << "\n";
+	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << "\n";
 
 	LLVMContext& Context = M.getContext();
 	IRBuilder<> Builder(Context);
@@ -375,45 +341,81 @@ bool helper::CreateCollectAddressFunction(Module& M)
 	auto ArgIt = CollectAddrFunc->arg_begin();
 	Value* ArrayArg = &(*ArgIt);
 
-	size_t Index = 0;
+	size_t CollectIndex = 0;
 
 	for (Function& F : M) {
-		if (F.isDeclaration() || F.hasExternalLinkage())
-			continue;
 
-		// Insert the address of the current function at the current index
-		Value* FuncAddr = Builder.CreatePointerCast(&F, VoidPtrTy);
-		Value* ElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(Index++) });
-		Builder.CreateStore(FuncAddr, ElemPtr);
+		////isIntrinsic() LLVM 提供的特殊函数，代表一些底层硬件操作或内置功能,这些函数直接映射到目标架构的特定指令，而不需要通过常规的函数调用方式完成。
+		if (F.empty() || F.isDeclaration() || F.isIntrinsic() || (F.getName() == __str_CollectAddressFunction + std::to_string(g_ModueHashForPatch))) 
+		{
+			errs() << "skip_func:" << F.getName() << "\n";
+			continue; //只收集当前函数和当前函数调用的函数。 导入的函数没有函数体，不用枚举
+		}
+
+		errs() << "  iterate_func:" << F.getName() << "\n";
+
+		if (!IsFuncNameCollected(F.getName()))
+		{
+			// Insert the address of the current function at the current index
+			Value* FuncAddr = Builder.CreatePointerCast(&F, VoidPtrTy);
+			Value* ElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(CollectIndex++) });
+			Builder.CreateStore(FuncAddr, ElemPtr);
+
+			CollectItemInfo oItemInfo(CollectIndex-1, em_type_function);
+			g_mapCollectAddressData[F.getName().data()] = oItemInfo;
+
+			errs() << "    Collect_local_func:" << F.getName() << "\n";
+		}
 
 		// Collect called functions
 		for (BasicBlock& BB : F) {
 			for (Instruction& Inst : BB) {
 				if (auto* Call = dyn_cast<CallBase>(&Inst)) {
 					if (Function* Callee = Call->getCalledFunction()) {
-						if (!Callee->isDeclaration() && Callee->hasInternalLinkage()) {
-							Value* CalleeAddr = Builder.CreatePointerCast(Callee, VoidPtrTy);
-							Value* CalleeElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(Index++) });
-							Builder.CreateStore(CalleeAddr, CalleeElemPtr);
-							errs() << "Callee_func:"  << Callee->getName() << "\n";
+						if (!Callee->isIntrinsic()/*!Callee->isDeclaration() && Callee->hasInternalLinkage()*/) {
+
+							if (_str_LQCallVm != Callee->getName() && !IsFuncNameCollected(Callee->getName())) //do not need collect LQCallVm. and 函数必须还未收集
+							{
+								Value* CalleeAddr = Builder.CreatePointerCast(Callee, VoidPtrTy);
+								Value* CalleeElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(CollectIndex++) });
+								Builder.CreateStore(CalleeAddr, CalleeElemPtr);
+
+								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function);
+								g_mapCollectAddressData[Callee->getName().data()] = oItemInfo;
+
+								errs() << "    Collect_Call_func:" << Callee->getName() << "\n";
+							}
+
 						}
+					}
+				}
+
+				for (Use& U : Inst.operands()) {
+					if (GlobalVariable* GV = dyn_cast<GlobalVariable>(U.get())) {
+
+						if (!IsFuncNameCollected(GV->getName()))
+						{
+							Value* GVAddr = Builder.CreatePointerCast(GV, VoidPtrTy);
+							Value* GVElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(CollectIndex++) });
+							Builder.CreateStore(GVAddr, GVElemPtr);
+
+							CollectItemInfo oItemInfo(CollectIndex - 1, em_type_globalValue);
+							g_mapCollectAddressData[GV->getName().data()] = oItemInfo;
+
+							errs() << "    Collect_Used_GV:" << GV->getName() << "\n";
+						}
+
 					}
 				}
 			}
 		}
-
-		// Collect global variables used in function
-		for (User* U : F.users()) {
-			if (GlobalVariable* GV = dyn_cast<GlobalVariable>(U)) {
-				Value* GVAddr = Builder.CreatePointerCast(GV, VoidPtrTy);
-				Value* GVElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(Index++) });
-				Builder.CreateStore(GVAddr, GVElemPtr);
-				errs() << "Callee_GV:" << GV->getName() << "\n";
-			}
-		}
 	}
 
+	g_AddressCollectedCount = CollectIndex;
+
 	Builder.CreateRetVoid();
+
+	errs() <<"**Leave " << __FUNCTION__ << " M:" << M.getName() << "\n";
 	return true;
 }
 
@@ -421,8 +423,7 @@ bool helper::CreateCollectAddressFunction(Module& M)
 //生成函数 void Create_Init_Module_Function //mod_init_func 类型函数
 bool helper::Create_Init_Module_Function(Module& M)
 {
-
-	errs() << "Enter_func:" << __FUNCTION__ << M.getName() << "\n";
+	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << "\n";
 
 	LLVMContext& Context = M.getContext();
 	IRBuilder<> Builder(Context);
@@ -432,7 +433,7 @@ bool helper::Create_Init_Module_Function(Module& M)
 	ModuleInfoTy->setBody({
 		Type::getInt64Ty(Context),  // moduleHash     
 		Type::getInt8PtrTy(Context), // g_needPathValueAddress
-		Type::getInt32Ty(Context), // functionCount
+		Type::getInt32Ty(Context), // PatchedFunctionCount
 		Type::getInt8PtrTy(Context), // collect_FuncVar_Info
 		Type::getInt32Ty(Context), // collectCounts
 		Type::getInt32Ty(Context), // collectFuncCounts
@@ -456,12 +457,12 @@ bool helper::Create_Init_Module_Function(Module& M)
 	// Create the `module_info` instance in the initializer
 	Value* ModInfo = Builder.CreateAlloca(ModuleInfoTy);
 
-	// Set values in `module_info`
+	// Set values in `module_info`    设置 moduleHash
 	Builder.CreateStore(ConstantInt::get(Type::getInt64Ty(Context), g_ModueHashForPatch),
 		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 0));
 
 
-	// Assume g_needPath_123456789 and functionCount are defined elsewhere
+	// Assume g_needPath_123456789 and functionCount are defined elsewhere    设置 g_needPathValueAddress地址
 	GlobalVariable* GNeedPathVar = M.getGlobalVariable(__str_g_needpatch_lqcppReload + std::to_string(g_ModueHashForPatch), true);
 	Value* GNeedPathVarPtr = GNeedPathVar
 		? Builder.CreatePointerCast(GNeedPathVar, Type::getInt8PtrTy(Context))
@@ -471,11 +472,11 @@ bool helper::Create_Init_Module_Function(Module& M)
 		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 1));
 
 
-	// Set values in `module_info`
+	// Set values in `module_info`   设置 PatchedFunctionCount
 	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), g_needPatchFuncCount),
 		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 2));
 
-	//设置 g_needPathValueAddress 地址
+	//  设置 CollectAddressFunction 收集函数地址
 	Function* ColFuncVarInfo = M.getFunction(__str_CollectAddressFunction + std::to_string(g_ModueHashForPatch));
 	Value* ColFuncVarInfoPtr = ColFuncVarInfo
 		? Builder.CreatePointerCast(ColFuncVarInfo, Type::getInt8PtrTy(Context))
@@ -483,6 +484,10 @@ bool helper::Create_Init_Module_Function(Module& M)
 
 	Builder.CreateStore(ColFuncVarInfoPtr,
 		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 3));
+
+	//设置 g_AddressCollectedCount
+	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), g_AddressCollectedCount),
+		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 4));
 
 	// Call register_module_LQCppHotReload(&modInfo)
 	Builder.CreateCall(RegisterFunc, { ModInfo });
@@ -493,204 +498,9 @@ bool helper::Create_Init_Module_Function(Module& M)
 	// Add to global constructors to ensure it runs on module load
 	appendToGlobalCtors(M, InitFunc, 0);
 
-	errs() << "Leave_func:" << __FUNCTION__ << M.getName() << "\n";
+	errs() <<"**Leave " << __FUNCTION__ << " M:" << M.getName() << "\n";
 
 	return true;//PreservedAnalyses::all();
 
 }
 
-
-//void * func_UE(IM3Runtime runtime, IM3ImportContext _ctx, uint64_t * _sp,  void * _mem)
-bool helper::BuildWrapperFunction(Module& module)
-{
-
-	errs()<<"\n" << "*******Enter " << __FUNCTION__ << "  *******  M:" << module.getName() << "\n";
-	//auto& context = module.getContext();
-
-	// 创建函数列表
-	std::vector<Function*> functionList;
-
-	// 遍历模块中的所有函数，并将其添加到函数列表中
-	for (Function& F : module) {
-		functionList.push_back(&F);
-	}
-
-	// 遍历函数列表并处理每个函数
-	for (Function* F : functionList) 
-	{
-		errs() << "func:" << __FUNCTION__ << "  F:" << F->getName() << "\n";
-
-		if (F->isDeclaration() || F->isIntrinsic())
-		{
-			continue;
-		}
-
-		//F.addFnAttr("funcID", std::to_string(funcID));
-		std::string FuncId = getFunctionID(*F);
-
-		errs() << "func:" << __FUNCTION__ << "  F:" << F->getName() << "\n";
-
-		F->addFnAttr("funcID", FuncId);
-
-		LLVMContext& context = F->getContext();
-		Module* module = F->getParent();
-
-		// 获取原函数的名称
-		std::string origFuncName = F->getName().str();
-
-		// 创建新函数名称
-		std::string newFuncName = origFuncName + "_UE";
-
-		// 获取原函数的类型
-		FunctionType* origFuncType = F->getFunctionType();
-
-		// 创建新函数类型
-		FunctionType* newFuncType = FunctionType::get(Type::getInt64PtrTy(context), { Type::getInt64PtrTy(context), Type::getInt64PtrTy(context), Type::getInt64PtrTy(context), Type::getInt64PtrTy(context) }, false);
-
-		// 在模块中创建新函数
-		Function* newFunc = Function::Create(newFuncType, Function::ExternalLinkage, newFuncName, module);
-
-
-		// 创建一个自定义属性，键为"IsWrapperFunc"，值为1
-		Attribute IsWrapperFuncAttr = Attribute::get(F->getContext(), "IsWrapperFunc", "1");
-		// 将自定义属性添加到函数
-		newFunc->addFnAttr(IsWrapperFuncAttr);
-
-		// 创建新函数的基本块
-		BasicBlock* entryBlock = BasicBlock::Create(context, "entry", newFunc);
-		IRBuilder<> builder(entryBlock);
-
-		// 获取新函数的参数
-		Argument* runtimeArg = &*newFunc->arg_begin();
-		Argument* ctxArg = &*(newFunc->arg_begin() + 1);
-		Argument* spArg = &*(newFunc->arg_begin() + 2);
-		Argument* memArg = &*(newFunc->arg_begin() + 3);
-
-		// 根据当前函数的参数个数从 _sp 指针获取参数值
-		unsigned paramCount = F->arg_size();
-		std::vector<Value*> params;
-		for (unsigned i = 0; i < paramCount; ++i) {
-			Value* spPtr = builder.CreateGEP(IntegerType::getInt64Ty(context), spArg, ConstantInt::get(Type::getInt32Ty(context), i+1));
-			//Value* param = builder.CreateLoad(IntegerType::getInt64Ty(context), spPtr);
-
-			Argument* arg = F->getArg(i);
-
-			Value* param = builder.CreateLoad(arg->getType(), spPtr);
-			params.push_back(param);
-		}
-
-		// 调用原函数
-		Value* callResult = builder.CreateCall(F, params);
-
-		// 创建返回指令
-		//builder.CreateRet(callResult);
-		builder.CreateRet(ConstantPointerNull::get(Type::getInt8PtrTy(context)));
-	}
-
-	return true;
-}
-
-bool helper::CountFunctionCallsInModule(Module& module)
-{
-	auto& context = module.getContext();
-
-	// Function name to IR variable map that holds the call counters
-	StringMap<Constant*> callCounterMap;
-
-	// Function name to IR variable map that holds the function names
-	StringMap<Constant*> functionNameMap;
-
-	// Step 1. For each function in the module, inject the code for call-counting
-	for (Function& function : module)
-	{
-
-		errs() << "minkee func:" << __FUNCTION__ << ":  " << function.getName() << "\n";
-
-		if (function.isDeclaration())
-		{
-			continue;
-		}
-
-		// Get an IR builder and set the insertion point to the top of the function
-		IRBuilder<> counterBuilder(&*function.getEntryBlock().getFirstInsertionPt());
-
-		// Create a global variable to count the calls to this function
-		std::string counterName = "counter_" + function.getName().str();
-		Constant* counterVariable = helper::CreateGlobalVariable(module, counterName);
-		callCounterMap[function.getName()] = counterVariable;
-
-		// Create a global variable to hold the name of this function
-		Constant* functionName = counterBuilder.CreateGlobalStringPtr(function.getName(), "name_" + function.getName());
-		functionNameMap[function.getName()] = functionName;
-
-		// Inject instruction to increment the call count each time this function executes
-		LoadInst* counteCurrentValue = counterBuilder.CreateLoad(IntegerType::getInt32Ty(context), counterVariable);
-		Value* counterNextValue = counterBuilder.CreateAdd(counterBuilder.getInt32(1), counteCurrentValue);
-		counterBuilder.CreateStore(counterNextValue, counterVariable);
-
-		// Let the opt tool print out some debug information
-		// (Visible only if we pass "-debug" to the command and have an assert build.)
-		LLVM_DEBUG(dbgs() << "Instrumented: " << function.getName() << "\n");
-	}
-
-	// Stop here if there is no function definition in this module
-	if (callCounterMap.size() == 0)
-	{
-		return false;
-	}
-
-	// Step 2. Inject the declaration of "printf()"
-	//
-	// Create (or get) the following declaration in the IR module:
-	//    declare i32 @printf(i8*, ...)
-	//
-	// It corresponds to the following C declaration:
-	//    int printf(char*, ...)
-	PointerType* printfArgType = PointerType::getUnqual(Type::getInt8Ty(context));
-	FunctionType* printfFunctionType = FunctionType::get(IntegerType::getInt32Ty(context),
-		printfArgType,
-		/*IsVarArgs=*/true);
-	FunctionCallee printfCallee = module.getOrInsertFunction("printf", printfFunctionType);
-
-	// Step 3. Inject a global variable that will hold the printf format string
-	Constant* formatString = ConstantDataArray::getString(context, "Function: %s, called %d times\n");
-	Constant* formatStringVariable = module.getOrInsertGlobal("", formatString->getType());
-	dyn_cast<GlobalVariable>(formatStringVariable)->setInitializer(formatString);
-
-	// Step 4. Define a printf wrapper that will print the results
-	//
-	// Define `PrintfWrapper` that will print the results stored in functionNameMap
-	// and callCounterMap. It is equivalent to the following C++ function:
-	// ```
-	//     void PrintfWrapper()
-	//     {
-	//          for (auto &item : functions)
-	//          {
-	//              printf("Function: %s, called %d times\n", item.name, item.count);
-	//          }
-	//     }
-	// ```
-	// ("item.name" comes from functionNameMap, "item.count" comes from callCounterMap.)
-	FunctionType* printfWrapperType = FunctionType::get(Type::getVoidTy(context),
-		{},
-		/*IsVarArgs=*/false);
-	Function* printfWrapperFunction =
-		dyn_cast<Function>(module.getOrInsertFunction("PrintfWrapper", printfWrapperType).getCallee());
-	BasicBlock* enterBlock = BasicBlock::Create(context, "enter", printfWrapperFunction);
-	IRBuilder<> printfWrapperBuilder(enterBlock);
-
-	Value* formatStringPtr = printfWrapperBuilder.CreatePointerCast(formatStringVariable, printfArgType);
-	for (auto& item : callCounterMap)
-	{
-		Constant* functionName = functionNameMap[item.first()];
-		LoadInst* counterValue = printfWrapperBuilder.CreateLoad(IntegerType::getInt32Ty(context), item.second);
-		printfWrapperBuilder.CreateCall(printfCallee, { formatStringPtr, functionName, counterValue });
-	}
-
-	printfWrapperBuilder.CreateRetVoid();
-
-	// Step 5. Call `PrintfWrapper` at the very end of this module
-	appendToGlobalDtors(module, printfWrapperFunction, /*Priority=*/0);
-
-	return true;
-}
