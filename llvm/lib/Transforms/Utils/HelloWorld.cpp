@@ -19,8 +19,17 @@
 #include "llvm/ADT/StringExtras.h"
 
 #include "llvm/Transforms/Utils/city.h"
+#include <fcntl.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__APPLE__)
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 #include <iostream>
+#include <fstream>
 #include <map>
 
 #define DEBUG_TYPE "runtime-function-call-counter"
@@ -150,7 +159,7 @@ PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 
 	bool changed = true;
 	changed &= helper::PatchFunctionCallVM(M);
-	//changed &= helper::CreateCollectAddressFunction(M);
+	changed &= helper::CreateCollectAddressFunction(M);
 	changed &= helper::Create_Init_Module_Function(M);
 // 	changed &= helper::BuildWrapperFunction(M);
 // 			   helper::CreateGetProcFunction(M);
@@ -195,7 +204,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 	for (Function& F : M) {
 
-		if (F.empty() || F.isDeclaration())
+		if (F.empty() || F.isDeclaration() || F.isIntrinsic())
 		{
 			errs() << "skip_func:" << F.getName() << "\n";
 			continue;
@@ -296,8 +305,8 @@ enum emCollectType
 
 struct CollectItemInfo
 {
-	uint32_t collectIndex = 0; //在数组的存放index，调用Builder.CreateStore时index +1
-	uint32_t collectType = 0; //函数或全局变量
+	uint32_t collectIndex = 0; //在数组的存放index，调用Builder.CreateStore时index +1。 当前collectIndex的最大值决定回调CollectAddressFunction时，需要new的数组大小
+	uint32_t collectType = 0; //函数或全局变量 emCollectType
 
 	CollectItemInfo():collectIndex(0) ,collectType(0)
 	{}
@@ -307,11 +316,80 @@ struct CollectItemInfo
 	{}
 };
 
-std::map<std::string, CollectItemInfo> g_mapCollectAddressData;
+
+struct stSavedCollectInfo //序列化数据到本地
+{
+	uint64_t moduleHash;
+	std::map<std::string, CollectItemInfo> mapCollectAddressData; //Name:?MinkeeTestFunc@@YA_NPEB_W@Z        patch_function id:109  //记录index 和名字关系，
+
+	stSavedCollectInfo():moduleHash(0){}
+};
+
+stSavedCollectInfo g_collectInfo; //序列化数据到本地
+
+// 文件锁定
+std::mutex fileMutex;
+
+// 保存到二进制文件（追加）
+void saveToBinaryFile(const std::string& filename) {
+
+	std::lock_guard<std::mutex> lock(fileMutex);
+
+#if defined(__APPLE__)
+	int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0666);
+	if (fd == -1) {
+		std::cerr << "Failed to open the file." << std::endl;
+		return;
+	}
+#endif
+
+
+#if defined(_WIN32)
+	// 若不存在名为"pmutex"的互斥量则创建它；否则获取其句柄
+	HANDLE hMutex = CreateMutexA(NULL, false, "pmutex_save_collctInfo_75FB33D1-DC3C-4976-81FC-F4D6A5B38036");
+	if (NULL == hMutex)
+	{
+		return ;
+	}
+#elif defined(__APPLE__)
+	// 锁定文件
+	if (flock(fd, LOCK_EX) == -1) {
+		std::cerr << "Failed to lock the file." << std::endl;
+		close(fd);
+		return;
+	}
+#endif
+
+	std::ofstream outFile(filename, std::ios::binary | std::ios::app);
+	outFile.write(reinterpret_cast<const char*>(&g_collectInfo.moduleHash), sizeof(g_collectInfo.moduleHash));
+
+	size_t mapSize = g_collectInfo.mapCollectAddressData.size();
+	outFile.write(reinterpret_cast<const char*>(&mapSize), sizeof(mapSize));
+
+	for (const auto& [key, value] : g_collectInfo.mapCollectAddressData) {
+		size_t keySize = key.size();
+		outFile.write(reinterpret_cast<const char*>(&keySize), sizeof(keySize));
+		outFile.write(key.c_str(), keySize);
+		outFile.write(reinterpret_cast<const char*>(&value.collectIndex), sizeof(value.collectIndex));
+		outFile.write(reinterpret_cast<const char*>(&value.collectType), sizeof(value.collectType));
+	}
+
+
+
+#if defined(_WIN32)
+	CloseHandle(hMutex); // 释放互斥量
+	hMutex = NULL;
+#elif defined(__APPLE__)
+	flock(fd, LOCK_UN);	// 解锁文件
+	close(fd);
+#endif
+
+}
+
 
 bool IsFuncNameCollected(const llvm::StringRef& funcName)
 {
-	if (g_mapCollectAddressData.find(funcName.data()) != g_mapCollectAddressData.end())
+	if (g_collectInfo.mapCollectAddressData.find(funcName.data()) != g_collectInfo.mapCollectAddressData.end())
 	{
 		return true;
 	}
@@ -319,13 +397,15 @@ bool IsFuncNameCollected(const llvm::StringRef& funcName)
 	return false;
 }
 
-//生成函数 void CollectAddressFunction_moduleHash(void* pAddrTable) ;这个函数外部调用，获取收集的函数和变量地址
+//生成函数 void CollectAddressFunction_moduleHash(void** pAddrTable) ;这个函数外部调用，获取收集的函数和变量地址
 bool helper::CreateCollectAddressFunction(Module& M)
 {
 	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << "\n";
 
 	LLVMContext& Context = M.getContext();
 	IRBuilder<> Builder(Context);
+
+	g_collectInfo.moduleHash = g_ModueHashForPatch;
 
 	// Define the function type for CollectAddressFunction: void(void* [])
 	Type* VoidTy = Type::getVoidTy(Context);
@@ -362,7 +442,7 @@ bool helper::CreateCollectAddressFunction(Module& M)
 			Builder.CreateStore(FuncAddr, ElemPtr);
 
 			CollectItemInfo oItemInfo(CollectIndex-1, em_type_function);
-			g_mapCollectAddressData[F.getName().data()] = oItemInfo;
+			g_collectInfo.mapCollectAddressData[F.getName().data()] = oItemInfo;
 
 			errs() << "    Collect_local_func:" << F.getName() << "\n";
 		}
@@ -381,7 +461,7 @@ bool helper::CreateCollectAddressFunction(Module& M)
 								Builder.CreateStore(CalleeAddr, CalleeElemPtr);
 
 								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function);
-								g_mapCollectAddressData[Callee->getName().data()] = oItemInfo;
+								g_collectInfo.mapCollectAddressData[Callee->getName().data()] = oItemInfo;
 
 								errs() << "    Collect_Call_func:" << Callee->getName() << "\n";
 							}
@@ -400,7 +480,7 @@ bool helper::CreateCollectAddressFunction(Module& M)
 							Builder.CreateStore(GVAddr, GVElemPtr);
 
 							CollectItemInfo oItemInfo(CollectIndex - 1, em_type_globalValue);
-							g_mapCollectAddressData[GV->getName().data()] = oItemInfo;
+							g_collectInfo.mapCollectAddressData[GV->getName().data()] = oItemInfo;
 
 							errs() << "    Collect_Used_GV:" << GV->getName() << "\n";
 						}
@@ -412,6 +492,7 @@ bool helper::CreateCollectAddressFunction(Module& M)
 	}
 
 	g_AddressCollectedCount = CollectIndex;
+	saveToBinaryFile("D:\\dev-game\\IOS-patch\\TestRunVm\\testCollectAddrData.dat");
 
 	Builder.CreateRetVoid();
 
@@ -434,8 +515,8 @@ bool helper::Create_Init_Module_Function(Module& M)
 		Type::getInt64Ty(Context),  // moduleHash     
 		Type::getInt8PtrTy(Context), // g_needPathValueAddress
 		Type::getInt32Ty(Context), // PatchedFunctionCount
-		Type::getInt8PtrTy(Context), // collect_FuncVar_Info
-		Type::getInt32Ty(Context), // collectCounts
+		Type::getInt8PtrTy(Context), // collect_FuncVar_Info //收集函数地址
+		Type::getInt32Ty(Context), // collectCounts //收集的总数量
 		Type::getInt32Ty(Context), // collectFuncCounts
 		Type::getInt32Ty(Context)  // collectGvarCounts
 		});
@@ -463,9 +544,9 @@ bool helper::Create_Init_Module_Function(Module& M)
 
 
 	// Assume g_needPath_123456789 and functionCount are defined elsewhere    设置 g_needPathValueAddress地址
-	GlobalVariable* GNeedPathVar = M.getGlobalVariable(__str_g_needpatch_lqcppReload + std::to_string(g_ModueHashForPatch), true);
-	Value* GNeedPathVarPtr = GNeedPathVar
-		? Builder.CreatePointerCast(GNeedPathVar, Type::getInt8PtrTy(Context))
+	GlobalVariable* GNeedPathVar_address = M.getGlobalVariable(__str_g_needpatch_lqcppReload + std::to_string(g_ModueHashForPatch), true);
+	Value* GNeedPathVarPtr = GNeedPathVar_address
+		? Builder.CreatePointerCast(GNeedPathVar_address, Type::getInt8PtrTy(Context))
 		: Constant::getNullValue(Type::getInt8PtrTy(Context));
 
 	Builder.CreateStore(GNeedPathVarPtr,
@@ -488,6 +569,14 @@ bool helper::Create_Init_Module_Function(Module& M)
 	//设置 g_AddressCollectedCount
 	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), g_AddressCollectedCount),
 		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 4));
+
+	//设置 collectFuncCounts
+	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), 123456),
+		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 5));
+
+	//设置 collectGvarCounts
+	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), 567890),
+		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 6));
 
 	// Call register_module_LQCppHotReload(&modInfo)
 	Builder.CreateCall(RegisterFunc, { ModInfo });
