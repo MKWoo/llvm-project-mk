@@ -52,6 +52,8 @@ namespace helper
 	bool CreateCollectAddressFunction(Module& module);
 	bool Create_Init_Module_Function(Module& module);
 
+	bool BuildWrapperFunction(Module& module);
+
 
 } // namespace helper
 
@@ -157,22 +159,158 @@ PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 
 	errs() << "####### Start_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() <<"  moduleHash:" << g_ModueHashForPatch <<"\n";
 
+//	bool changed = true;
+//	changed &= helper::PatchFunctionCallVM(M);
+//	changed &= helper::CreateCollectAddressFunction(M);
+//	changed &= helper::Create_Init_Module_Function(M);
+//	changed &= helper::BuildWrapperFunction(M);
+//	//changed &= helper::CreateCollectAddressFunction(M);
+//// 	changed &= helper::BuildWrapperFunction(M);
+//// 			   helper::CreateGetProcFunction(M);
+
 	bool changed = true;
+	changed &= helper::BuildWrapperFunction(M);
 	changed &= helper::PatchFunctionCallVM(M);
 	changed &= helper::CreateCollectAddressFunction(M);
 	changed &= helper::Create_Init_Module_Function(M);
-// 	changed &= helper::BuildWrapperFunction(M);
-// 			   helper::CreateGetProcFunction(M);
 
 	errs() << "\n" << "####### End_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() << "\n\n\n";
 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
+//和 G:\llvm-project\llvm\include\llvm\IR\Type.h 的enum TypeID对应
+const char*  TypeID_str[] {
+	// PrimitiveTypes
+	"HalfTyID = 0",  ///< 16-bit floating point type
+	"BFloatTyID",    ///< 16-bit floating point type (7-bit significand)
+	"FloatTyID",     ///< 32-bit floating point type
+	"DoubleTyID",    ///< 64-bit floating point type
+	"X86_FP80TyID",  ///< 80-bit floating point type (X87)
+	"FP128TyID",     ///< 128-bit floating point type (112-bit significand)
+	"PPC_FP128TyID", ///< 128-bit floating point type (two 64-bits", PowerPC)
+	"VoidTyID",      ///< type with no size
+	"LabelTyID",     ///< Labels
+	"MetadataTyID",  ///< Metadata
+	"X86_MMXTyID",   ///< MMX vectors (64 bits", X86 specific)
+	"X86_AMXTyID",   ///< AMX vectors (8192 bits", X86 specific)
+	"TokenTyID",     ///< Tokens
+	"IntegerTyID",        ///< Arbitrary bit width integers
+	"FunctionTyID",       ///< Functions
+	"PointerTyID",        ///< Pointers
+	"StructTyID",         ///< Structures
+	"ArrayTyID",          ///< Arrays
+	"FixedVectorTyID",    ///< Fixed width SIMD vector type
+	"ScalableVectorTyID", ///< Scalable SIMD vector type
+	"TypedPointerTyID",   ///< Typed pointer used by some GPU targets
+	"TargetExtTyID",      ///< Target extension type
+};
 
+std::string getTypeName(Type* Ty) {
+
+
+	if (Ty->getTypeID()>llvm::Type::TypeID::TargetExtTyID)
+	{
+		int*p =0;*p=0; //force crash
+	}
+
+	std::string strType = TypeID_str[Ty->getTypeID()];
+	return strType;
+}
+
+
+#define WrapperFuncStartStr "wrapper_"
+
+std::string getFunctionSignature(Function* F) {
+	std::string Signature = WrapperFuncStartStr/*"wrapper_"*/ + getTypeName(F->getReturnType());
+	for (auto& Arg : F->args()) {
+		Signature += "_" + getTypeName(Arg.getType());
+	}
+	return Signature;
+}
+
+FunctionType* getWrapperFunctionType(LLVMContext& Context) {
+	return FunctionType::get(Type::getInt8PtrTy(Context), {
+		Type::getInt8PtrTy(Context), // runtime
+		Type::getInt8PtrTy(Context), // _ctx
+		Type::getInt64PtrTy(Context), // _sp
+		Type::getInt8PtrTy(Context)  // _mem
+		}, false);
+}
+
+
+bool helper::BuildWrapperFunction(Module& M)
+{
+	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << " moduleHash:" << g_ModueHashForPatch << "\n";
+
+	LLVMContext& Context = M.getContext();
+	IRBuilder<> Builder(Context);
+	std::unordered_map<std::string, Function*> WrapperMap;
+
+	FunctionType* WrapperFTy = getWrapperFunctionType(Context);
+
+	for (Function& F : M.functions()) {
+		// 过滤掉声明或者不需要包装的函数
+		if (F.empty() || F.isDeclaration() || F.isIntrinsic())
+		{
+			errs() << "skip_func:" << F.getName() << "\n";
+			continue;
+		}
+
+		std::string Signature = getFunctionSignature(&F);
+		//Function* WrapperFunc = nullptr;
+
+		if (WrapperMap.find(Signature) == WrapperMap.end()) {
+
+// 			WrapperFunc = Function::Create(WrapperFTy, GlobalValue::ExternalLinkage, Signature, &M);
+// 
+// 			// 添加 COMDAT 属性
+// 			const std::string ComdatName = Signature + "_comdat";
+// 			M.getOrInsertComdat(ComdatName)->setSelectionKind(Comdat::Any);
+// 			WrapperFunc->setComdat(M.getOrInsertComdat(ComdatName));
+// 
+// 				// Create the function body
+// 			BasicBlock* EntryBB = BasicBlock::Create(Context, "entry", WrapperFunc);
+// 			IRBuilder<> Builder(EntryBB);
+// 
+// 			// return the runtime pointer
+// 			Builder.CreateRet(WrapperFunc->arg_begin());
+// 
+// 			WrapperMap[Signature] = WrapperFunc;
+			Function* WrapperFunc = Function::Create(WrapperFTy, GlobalValue::ExternalLinkage, Signature, &M);
+
+			// 使用相同的 Comdat 对象进行设置
+			Comdat* C = M.getOrInsertComdat(Signature);
+			C->setSelectionKind(Comdat::Any);
+			WrapperFunc->setComdat(C);
+
+			// Create the function body
+			BasicBlock* EntryBB = BasicBlock::Create(Context, "entry", WrapperFunc);
+			IRBuilder<> Builder(EntryBB);
+
+			// return the runtime pointer
+			Builder.CreateRet(WrapperFunc->arg_begin());
+
+			WrapperMap[Signature] = WrapperFunc;
+		}
+	}
+
+	errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << "\n";
+	return true;
+}
 
 
 // 给每个函数分配一个数字ID //整个module里面的函数id是基于g_funcID递增的
 int g_funcID = 0;
+
+bool IsWrapperFunction(Function& F)
+{
+	std::string origFuncName = F.getName().str();
+	if (origFuncName.rfind(WrapperFuncStartStr, 0) ==0)
+	{
+		return true;
+	}
+	return false;
+}
 
 bool helper::PatchFunctionCallVM(Module& M)
 {
@@ -183,7 +321,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 	// Step 1: Count non-declaration functions
 	int patchFuncCount = 0;
 	for (Function& F : M) {
-		if (!F.isDeclaration() && !F.empty()) {
+		if (!F.isDeclaration() && !F.empty() && !F.isIntrinsic() && !IsWrapperFunction(F)) {
 			++patchFuncCount;
 		}
 	}
@@ -204,7 +342,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 	for (Function& F : M) {
 
-		if (F.empty() || F.isDeclaration() || F.isIntrinsic())
+		if (F.empty() || F.isDeclaration() || F.isIntrinsic()  || IsWrapperFunction(F))
 		{
 			errs() << "skip_func:" << F.getName() << "\n";
 			continue;
@@ -426,7 +564,7 @@ bool helper::CreateCollectAddressFunction(Module& M)
 	for (Function& F : M) {
 
 		////isIntrinsic() LLVM 提供的特殊函数，代表一些底层硬件操作或内置功能,这些函数直接映射到目标架构的特定指令，而不需要通过常规的函数调用方式完成。
-		if (F.empty() || F.isDeclaration() || F.isIntrinsic() || (F.getName() == __str_CollectAddressFunction + std::to_string(g_ModueHashForPatch))) 
+		if (F.empty() || F.isDeclaration() || F.isIntrinsic() || (F.getName() == __str_CollectAddressFunction + std::to_string(g_ModueHashForPatch)) /*|| IsWrapperFunction(F)*/)
 		{
 			errs() << "skip_func:" << F.getName() << "\n";
 			continue; //只收集当前函数和当前函数调用的函数。 导入的函数没有函数体，不用枚举
