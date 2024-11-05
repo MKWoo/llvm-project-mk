@@ -228,13 +228,136 @@ std::string getFunctionSignature(Function* F) {
 	return Signature;
 }
 
+//void * func_UE(void * runtime, void * _ctx, uint64_t * _sp, void * _mem, void* funAddress)
 FunctionType* getWrapperFunctionType(LLVMContext& Context) {
 	return FunctionType::get(Type::getInt8PtrTy(Context), {
 		Type::getInt8PtrTy(Context), // runtime
 		Type::getInt8PtrTy(Context), // _ctx
 		Type::getInt64PtrTy(Context), // _sp
-		Type::getInt8PtrTy(Context)  // _mem
+		Type::getInt8PtrTy(Context),  // _mem
+		Type::getInt8PtrTy(Context)   // funAddress
 		}, false);
+}
+
+
+
+//void generateWrapperBody(Function* WrapperFunc, Function* TargetFunc, LLVMContext& Context) {
+//	IRBuilder<> Builder(BasicBlock::Create(Context, "entry", WrapperFunc));
+//	auto ArgIter = WrapperFunc->arg_begin();
+//	Value* runtime = ArgIter++;
+//	Value* _ctx = ArgIter++;
+//	Value* _sp = ArgIter++;
+//	Value* _mem = ArgIter++;
+//	Value* funAddress = ArgIter++;
+//
+//	// Setup return value if needed.   如果返回值不是空，则把调用函数的返回值设置到 *sp
+//	Type* retType = TargetFunc->getReturnType();
+//	if (!retType->isVoidTy()) {
+//		if (retType->isIntegerTy(32)) {
+//			// m3ApiReturnType (uint32_t)
+//			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
+//			Builder.CreateStore(Builder.getInt32(0), retPtr); // Placeholder for actual return value
+//		}
+//		else if (retType->isIntegerTy(64)) {
+//			// m3ApiReturnType (uint64_t)
+//			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
+//			Builder.CreateStore(Builder.getInt64(0), retPtr); // Placeholder for actual return value
+//		}
+//	}
+//
+//	std::vector<Value*> Args;
+//	uint32_t spIndex = 0;
+//	for (auto& Arg : TargetFunc->args()) {
+//		Type* ArgType = Arg.getType();
+//		Value* ArgValue = nullptr;
+//		if (ArgType->isPointerTy()) { //如果是指针类型，用* ((uint32_t *) (_sp++))获取偏移值，然后返回 (char*)_mem+offset的移值
+//			// m3ApiGetArgMem
+//			Value* Offset = Builder.CreateLoad(Builder.getInt32Ty(), Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1)));
+//			ArgValue = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _mem, Offset);
+//		}
+//		else //如果是普通类型，直接返回 * ((TYPE *) (_sp++))
+//		{
+//			Value* funcIDValue = builder.getInt32(spIndex);
+//			ArgValue = Builder.CreateLoad(ArgType, Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(0)));
+//		}
+//
+//		++spIndex;
+//		Args.push_back(ArgValue);
+//	}
+//
+//	FunctionType* TargetFTy = TargetFunc->getFunctionType();
+//	Value* Callee = Builder.CreateBitCast(funAddress, TargetFTy->getPointerTo());
+//	Builder.CreateCall(TargetFTy, Callee, Args);
+//
+//	Builder.CreateRet(runtime);
+//}
+
+//void* func_UE(void* runtime, void* _ctx, uint64_t* _sp, void* _mem, void* funAddress)
+void generateWrapperBody(Function* WrapperFunc, Function* TargetFunc, LLVMContext& Context) {
+	IRBuilder<> Builder(BasicBlock::Create(Context, "entry", WrapperFunc));
+	auto ArgIter = WrapperFunc->arg_begin();
+	Value* runtime = ArgIter++;
+	Value* _ctx = ArgIter++;
+	Value* _sp = ArgIter++;
+	Value* _mem = ArgIter++;
+	Value* funAddress = ArgIter++;
+
+	uint32_t spIndex = 0; //sp读取指针
+	// Setup return value if needed.   如果返回值不是空，则把调用函数的返回值设置到 *sp
+	Type* retType = TargetFunc->getReturnType();
+	if (!retType->isVoidTy()) {
+		if (retType->isIntegerTy(32)) {
+			// m3ApiReturnType (uint32_t)
+			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
+			Builder.CreateStore(Builder.getInt32(0), retPtr); // Placeholder for actual return value
+		}
+		else if (retType->isIntegerTy(64)) {
+			// m3ApiReturnType (uint64_t)
+			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
+			Builder.CreateStore(Builder.getInt64(0), retPtr); // Placeholder for actual return value
+		}
+		spIndex++;
+	}
+
+	std::vector<Value*> Args;
+	for (auto& Arg : TargetFunc->args()) {
+		Type* ArgType = Arg.getType();
+		Value* ArgValue = nullptr;
+		if (ArgType->isPointerTy()) { //如果是指针类型，用* ((uint32_t *) (_sp++))获取偏移值，然后返回 (char*)_mem+offset的移值
+			// m3ApiGetArgMem
+			Value* SpIndexValue = Builder.getInt32(spIndex);
+			Value* Offset = Builder.CreateLoad(Builder.getInt32Ty(), Builder.CreateGEP(IntegerType::getInt32Ty(Context), _sp, SpIndexValue));
+			ArgValue = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _mem, Offset);
+		}
+		else //如果是普通类型，直接返回 * ((TYPE *) (_sp++))
+		{
+			Value* SpIndexValue = Builder.getInt32(spIndex);
+			ArgValue = Builder.CreateLoad(ArgType, Builder.CreateGEP(ArgType, _sp, SpIndexValue));
+		}
+
+		++spIndex;
+		Args.push_back(ArgValue);
+	}
+
+	FunctionType* TargetFTy = TargetFunc->getFunctionType();
+	Value* Callee = Builder.CreateBitCast(funAddress, TargetFTy->getPointerTo());
+	//Builder.CreateCall(TargetFTy, Callee, Args);
+
+	if (!retType->isVoidTy()) {
+		// m3ApiReturnType
+		Value* CallResult = Builder.CreateCall(TargetFTy, Callee, Args);
+		Builder.CreateStore(CallResult, Builder.CreateGEP(retType, _sp, Builder.getInt32(0))); //设置返回值到最初的*sp 上
+	}
+	else {
+		Builder.CreateCall(TargetFTy, Callee, Args);
+	}
+
+	// Create the return instruction
+	// Create a global constant string (empty string here)
+	Value* EmptyStr = Builder.CreateGlobalStringPtr("");
+
+	// Return the empty string
+	Builder.CreateRet(EmptyStr); //m3ApiSuccess  return "";
 }
 
 
@@ -283,12 +406,14 @@ bool helper::BuildWrapperFunction(Module& M)
 			C->setSelectionKind(Comdat::Any);
 			WrapperFunc->setComdat(C);
 
-			// Create the function body
-			BasicBlock* EntryBB = BasicBlock::Create(Context, "entry", WrapperFunc);
-			IRBuilder<> Builder(EntryBB);
+			// Create the function body ---test body
+			//BasicBlock* EntryBB = BasicBlock::Create(Context, "entry", WrapperFunc);
+			//IRBuilder<> Builder(EntryBB);
+			//// return the runtime pointer
+			//Builder.CreateRet(WrapperFunc->arg_begin());
+			// Create the function body ---test body
 
-			// return the runtime pointer
-			Builder.CreateRet(WrapperFunc->arg_begin());
+			generateWrapperBody(WrapperFunc, &F, Context);
 
 			WrapperMap[Signature] = WrapperFunc;
 		}
