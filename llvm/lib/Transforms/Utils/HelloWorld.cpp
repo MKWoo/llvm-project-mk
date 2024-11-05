@@ -150,6 +150,7 @@ uint32_t  g_AddressCollectedCount = 0; //收集的函数/全局变量地址  总
 
 #define __str_g_needpatch_lqcppReload "g_needpatch_lqcppReload_"
 #define __str_CollectAddressFunction "CollectAddressFunction_"
+#define __wrapper_GV_stuct_construct_function_prefix "__ConstuctSt_"
 
 PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 	std::string input_str =  M.getSourceFileName();
@@ -360,6 +361,109 @@ void generateWrapperBody(Function* WrapperFunc, Function* TargetFunc, LLVMContex
 	Builder.CreateRet(EmptyStr); //m3ApiSuccess  return "";
 }
 
+std::set<std::string> g_mapWrapperGVConstuctFunctionNames;
+
+ void createGlobalVariable(Module& M, std::string WrapperName, Function* WrapperFunc) {
+// 	// Create struct st_<WrapperName>
+// 	std::string StructName = "GVWrapperSt_" + WrapperName;
+// 	StructType* ST = StructType::create(M.getContext(), StructName);
+// 	ST->setBody({ Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext()) });
+// 
+// 	// Create constructor for struct
+// 	FunctionType* ConstructorType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+// 	Function* ConstructorFunc = Function::Create(ConstructorType, Function::ExternalLinkage, "__ctor_"+ StructName/* __wrapper_GV_stuct_construct_function_prefix + WrapperName*/, M);
+// 
+// 	g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
+// 
+// 	BasicBlock* ConstructorBB = BasicBlock::Create(M.getContext(), "entry", ConstructorFunc);
+// 	IRBuilder<> Builder(ConstructorBB);
+// 
+// 	uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
+// 	Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
+// 	Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
+// 	Value* Args[] = { ArgWrapperNameHash, FuncPtr };
+// 	Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
+// 	Builder.CreateRetVoid();
+// 
+// 	GlobalVariable* GVar = new GlobalVariable(M, ST, false,
+// 		GlobalValue::ExternalLinkage, nullptr, StructName);
+// 
+////  	// Add COMDAT to GVar
+//	Comdat* C = M.getOrInsertComdat("__ctor_" + StructName);
+//	C->setSelectionKind(Comdat::Any);
+//	ConstructorFunc->setComdat(C);
+//
+//	appendToGlobalCtors(M, ConstructorFunc, 65535);
+//
+//
+//	Comdat* CGVB = M.getOrInsertComdat(StructName);
+//	CGVB->setSelectionKind(Comdat::Any);
+//	GVar->setComdat(CGVB);
+// 
+// 	GVar->setInitializer(ConstantAggregateZero::get(ST));
+
+///////////////////////////////////////////////可以调用但是未解决重复问题
+	//std::string StructName = "GVWrapperSt_" + WrapperName;
+
+	// // 创建一个简单的函数类型，void function(void)
+	//FunctionType* FuncType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+	//Function* CtorFunc = Function::Create(FuncType, Function::ExternalLinkage, "__ctor_" + StructName, M);
+
+	//g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
+
+	//// 在构造函数中添加简单的打印逻辑（需本机支持 printf 函数）
+	//BasicBlock* BB = BasicBlock::Create(M.getContext(), "entry", CtorFunc);
+	//IRBuilder<> Builder(BB);
+
+	//uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
+	//Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
+	//Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
+
+	//Value* Args[] = { ArgWrapperNameHash, FuncPtr };
+	//Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
+	//Builder.CreateRetVoid();
+
+
+	//// 为函数设置 COMDAT 属性
+	//CtorFunc->setComdat(M.getOrInsertComdat(CtorFunc->getName()));
+
+	//// 将函数添加到全局构造函数列表
+	//appendToGlobalCtors(M, CtorFunc, 0);  //未解决重复问题
+	/////////////////////////////////////////////////可以调用但是未解决重复问题
+
+///////////////////////////////////////////////可以调用但是未解决重复问题----增加函数名参数，定位问题-------------未解决重复问题
+	std::string StructName = "GVWrapperSt_" + WrapperName;
+
+	// 创建一个简单的函数类型，void function(void)
+	FunctionType* FuncType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+	Function* CtorFunc = Function::Create(FuncType, Function::ExternalLinkage, "__ctor_" + StructName, M);
+
+	g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
+
+	// 在构造函数中添加简单的打印逻辑（需本机支持 printf 函数）
+	BasicBlock* BB = BasicBlock::Create(M.getContext(), "entry", CtorFunc);
+	IRBuilder<> Builder(BB);
+
+	uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
+	Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
+	Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
+
+	Value* FormatStr = Builder.CreateGlobalStringPtr(WrapperName);
+
+	Value* Args[] = { ArgWrapperNameHash, FuncPtr,  FormatStr  };
+	Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
+	Builder.CreateRetVoid();
+
+
+	// 为函数设置 COMDAT 属性
+	CtorFunc->setComdat(M.getOrInsertComdat(CtorFunc->getName()));
+
+	// 将函数添加到全局构造函数列表
+	appendToGlobalCtors(M, CtorFunc, 0);  //未解决重复问题
+	///////////////////////////////////////////////可以调用但是未解决重复问题----增加函数名参数，定位问题----------------未解决重复问题
+
+ }
+
 
 bool helper::BuildWrapperFunction(Module& M)
 {
@@ -415,6 +519,9 @@ bool helper::BuildWrapperFunction(Module& M)
 
 			generateWrapperBody(WrapperFunc, &F, Context);
 
+			// Create a COMDAT for this wrapper function
+			createGlobalVariable(M, Signature, WrapperFunc);
+
 			WrapperMap[Signature] = WrapperFunc;
 		}
 	}
@@ -430,7 +537,16 @@ int g_funcID = 0;
 bool IsWrapperFunction(Function& F)
 {
 	std::string origFuncName = F.getName().str();
-	if (origFuncName.rfind(WrapperFuncStartStr, 0) ==0)
+	if (origFuncName.rfind(WrapperFuncStartStr, 0) ==0) //是否以WrapperFuncStartStr 开头
+	{
+		return true;
+	}
+
+// 	if (origFuncName.rfind(__wrapper_GV_stuct_construct_function_prefix, 0) == 0) //不是wrapper函数全局变量struct的构造函数
+// 	{
+// 		return true;
+// 	}
+	if (g_mapWrapperGVConstuctFunctionNames.find(origFuncName) != g_mapWrapperGVConstuctFunctionNames.end())
 	{
 		return true;
 	}
@@ -689,7 +805,7 @@ bool helper::CreateCollectAddressFunction(Module& M)
 	for (Function& F : M) {
 
 		////isIntrinsic() LLVM 提供的特殊函数，代表一些底层硬件操作或内置功能,这些函数直接映射到目标架构的特定指令，而不需要通过常规的函数调用方式完成。
-		if (F.empty() || F.isDeclaration() || F.isIntrinsic() || (F.getName() == __str_CollectAddressFunction + std::to_string(g_ModueHashForPatch)) /*|| IsWrapperFunction(F)*/)
+		if (F.empty() || F.isDeclaration() || F.isIntrinsic() || (F.getName() == __str_CollectAddressFunction + std::to_string(g_ModueHashForPatch)) || IsWrapperFunction(F))
 		{
 			errs() << "skip_func:" << F.getName() << "\n";
 			continue; //只收集当前函数和当前函数调用的函数。 导入的函数没有函数体，不用枚举
