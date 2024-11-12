@@ -206,9 +206,33 @@ const char*  TypeID_str[] {
 	"TargetExtTyID",      ///< Target extension type
 };
 
+const char* TypeID_str_oneAlpha[]{
+	"A", // "HalfTyID = 0",  ///< 16-bit floating point type
+	"B", // "BFloatTyID",    ///< 16-bit floating point type (7-bit significand)
+	"C", // "FloatTyID",     ///< 32-bit floating point type
+	"D", // "DoubleTyID",    ///< 64-bit floating point type
+	"E", // "X86_FP80TyID",  ///< 80-bit floating point type (X87)
+	"F", // "FP128TyID",     ///< 128-bit floating point type (112-bit significand)
+	"G", // "PPC_FP128TyID", ///< 128-bit floating point type (two 64-bits, PowerPC)
+	"H", // "VoidTyID",      ///< type with no size
+	"I", // "LabelTyID",     ///< Labels
+	"J", // "MetadataTyID",  ///< Metadata
+	"K", // "X86_MMXTyID",   ///< MMX vectors (64 bits, X86 specific)
+	"L", // "X86_AMXTyID",   ///< AMX vectors (8192 bits, X86 specific)
+	"M", // "TokenTyID",     ///< Tokens
+	"N", // "IntegerTyID",        ///< Arbitrary bit width integers
+	"O", // "FunctionTyID",       ///< Functions
+	"P", // "PointerTyID",        ///< Pointers
+	"Q", // "StructTyID",         ///< Structures
+	"R", // "ArrayTyID",          ///< Arrays
+	"S", // "FixedVectorTyID",    ///< Fixed width SIMD vector type
+	"T", // "ScalableVectorTyID", ///< Scalable SIMD vector type
+	"U", // "TypedPointerTyID",   ///< Typed pointer used by some GPU targets
+	"V"  // "TargetExtTyID",      ///< Target extension type
+};
+
+
 std::string getTypeName(Type* Ty) {
-
-
 	if (Ty->getTypeID()>llvm::Type::TypeID::TargetExtTyID)
 	{
 		int*p =0;*p=0; //force crash
@@ -228,6 +252,33 @@ std::string getFunctionSignature(Function* F) {
 	}
 	return Signature;
 }
+
+std::string getTypeNameOneAlpha(Type* Ty) {
+	if (Ty->getTypeID() > llvm::Type::TypeID::TargetExtTyID)
+	{
+		int* p = 0; *p = 0; //force crash
+	}
+
+	std::string strType = TypeID_str_oneAlpha[Ty->getTypeID()];
+	return strType;
+}
+
+//PQS 返回类型+参数类型 ，没有空格，没有下划线。 用于序列化函数类型
+std::string getFunctionTypeShortDesc(Function& F) {
+	std::string Signature = getTypeNameOneAlpha(F.getReturnType());
+	for (auto& Arg : F.args()) {
+		Signature +=  getTypeNameOneAlpha(Arg.getType());
+	}
+	return Signature;
+}
+
+uint64 FromFuncGetWrapperFuncSignatureHash(Function& F)
+{
+	std::string funcSignature = getFunctionSignature(&F);
+	uint64 WrapperNameHash = CityHash64(funcSignature.c_str(), funcSignature.size());
+	return WrapperNameHash;
+}	
+
 
 //void * func_UE(void * runtime, void * _ctx, uint64_t * _sp, void * _mem, void* funAddress)
 FunctionType* getWrapperFunctionType(LLVMContext& Context) {
@@ -686,12 +737,13 @@ struct CollectItemInfo
 {
 	uint32_t collectIndex = 0; //在数组的存放index，调用Builder.CreateStore时index +1。 当前collectIndex的最大值决定回调CollectAddressFunction时，需要new的数组大小
 	uint32_t collectType = 0; //函数或全局变量 emCollectType
+	std::string funcWrapperSignature; //PQS 返回值类型+参数类型//wrapper_VoidTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID 字符串函数，wrapper_+函数返回值类型+参数类型
 
-	CollectItemInfo():collectIndex(0) ,collectType(0)
+	CollectItemInfo() :collectIndex(0), collectType(0)
 	{}
-	CollectItemInfo(const CollectItemInfo& other):collectIndex(other.collectIndex) ,collectType(other.collectType)
+	CollectItemInfo(const CollectItemInfo& other) :collectIndex(other.collectIndex), collectType(other.collectType), funcWrapperSignature(other.funcWrapperSignature)
 	{}
-	CollectItemInfo(uint32_t collectIndex_in, uint32_t collectType_in):collectIndex(collectIndex_in),collectType(collectType_in)
+	CollectItemInfo(uint32_t collectIndex_in, uint32_t collectType_in, std::string funcWrapperSignature_in) :collectIndex(collectIndex_in), collectType(collectType_in), funcWrapperSignature(funcWrapperSignature_in)
 	{}
 };
 
@@ -751,8 +803,11 @@ void saveToBinaryFile(const std::string& filename) {
 		outFile.write(key.c_str(), keySize);
 		outFile.write(reinterpret_cast<const char*>(&value.collectIndex), sizeof(value.collectIndex));
 		outFile.write(reinterpret_cast<const char*>(&value.collectType), sizeof(value.collectType));
+		//outFile.write(reinterpret_cast<const char*>(&value.funcWrapperSignatureHash), sizeof(value.funcWrapperSignatureHash));
+		size_t funcWrapperSignatureSize = value.funcWrapperSignature.size();
+		outFile.write(reinterpret_cast<const char*>(&funcWrapperSignatureSize), sizeof(funcWrapperSignatureSize));
+		outFile.write(value.funcWrapperSignature.c_str(), funcWrapperSignatureSize);
 	}
-
 
 
 #if defined(_WIN32)
@@ -820,10 +875,10 @@ bool helper::CreateCollectAddressFunction(Module& M)
 			Value* ElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(CollectIndex++) });
 			Builder.CreateStore(FuncAddr, ElemPtr);
 
-			CollectItemInfo oItemInfo(CollectIndex-1, em_type_function);
+			CollectItemInfo oItemInfo(CollectIndex-1, em_type_function, getFunctionTypeShortDesc(F));
 			g_collectInfo.mapCollectAddressData[F.getName().data()] = oItemInfo;
 
-			errs() << "    Collect_local_func:" << F.getName() << "\n";
+			errs() << "index: " << CollectIndex - 1 << "    Collect_local_func:" << F.getName() << "\n";
 		}
 
 		// Collect called functions
@@ -839,10 +894,10 @@ bool helper::CreateCollectAddressFunction(Module& M)
 								Value* CalleeElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(CollectIndex++) });
 								Builder.CreateStore(CalleeAddr, CalleeElemPtr);
 
-								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function);
+								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(F));
 								g_collectInfo.mapCollectAddressData[Callee->getName().data()] = oItemInfo;
 
-								errs() << "    Collect_Call_func:" << Callee->getName() << "\n";
+								errs() <<"index: "<< CollectIndex - 1<< "    Collect_Call_func:" << Callee->getName() << "\n";
 							}
 
 						}
@@ -858,10 +913,10 @@ bool helper::CreateCollectAddressFunction(Module& M)
 							Value* GVElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(CollectIndex++) });
 							Builder.CreateStore(GVAddr, GVElemPtr);
 
-							CollectItemInfo oItemInfo(CollectIndex - 1, em_type_globalValue);
+							CollectItemInfo oItemInfo(CollectIndex - 1, em_type_globalValue, "");
 							g_collectInfo.mapCollectAddressData[GV->getName().data()] = oItemInfo;
 
-							errs() << "    Collect_Used_GV:" << GV->getName() << "\n";
+							errs() << "index: " << CollectIndex - 1 << "    Collect_Used_GV:" << GV->getName() << "\n";
 						}
 
 					}
@@ -895,9 +950,9 @@ bool helper::Create_Init_Module_Function(Module& M)
 		Type::getInt8PtrTy(Context), // g_needPathValueAddress
 		Type::getInt32Ty(Context), // PatchedFunctionCount
 		Type::getInt8PtrTy(Context), // collect_FuncVar_Info //收集函数地址
-		Type::getInt32Ty(Context), // collectCounts //收集的总数量
-		Type::getInt32Ty(Context), // collectFuncCounts
-		Type::getInt32Ty(Context)  // collectGvarCounts
+		Type::getInt32Ty(Context)/*,*/ // collectCounts //收集的总数量
+		//Type::getInt32Ty(Context), // collectFuncCounts
+		//Type::getInt32Ty(Context)  // collectGvarCounts
 		});
 
 	FunctionType* RegisterFuncTy = FunctionType::get(
@@ -949,13 +1004,13 @@ bool helper::Create_Init_Module_Function(Module& M)
 	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), g_AddressCollectedCount),
 		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 4));
 
-	//设置 collectFuncCounts
-	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), 123456),
-		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 5));
+	////设置 collectFuncCounts
+	//Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), 123456),
+	//	Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 5));
 
-	//设置 collectGvarCounts
-	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), 567890),
-		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 6));
+	////设置 collectGvarCounts
+	//Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), 567890),
+	//	Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 6));
 
 	// Call register_module_LQCppHotReload(&modInfo)
 	Builder.CreateCall(RegisterFunc, { ModInfo });
