@@ -269,6 +269,9 @@ std::string getFunctionTypeShortDesc(Function& F) {
 	for (auto& Arg : F.args()) {
 		Signature +=  getTypeNameOneAlpha(Arg.getType());
 	}
+
+	errs() << "      getFunctionTypeShortDesc  " << "func: "<<F.getName()<<"  Signature:" << Signature << "\n";
+
 	return Signature;
 }
 
@@ -894,7 +897,7 @@ bool helper::CreateCollectAddressFunction(Module& M)
 								Value* CalleeElemPtr = Builder.CreateGEP(VoidPtrArrTy, ArrayArg, { Builder.getInt32(0), Builder.getInt32(CollectIndex++) });
 								Builder.CreateStore(CalleeAddr, CalleeElemPtr);
 
-								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(F));
+								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(*Callee));
 								g_collectInfo.mapCollectAddressData[Callee->getName().data()] = oItemInfo;
 
 								errs() <<"index: "<< CollectIndex - 1<< "    Collect_Call_func:" << Callee->getName() << "\n";

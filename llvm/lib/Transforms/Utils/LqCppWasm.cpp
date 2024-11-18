@@ -65,7 +65,7 @@ PreservedAnalyses LqCppWasmModulePass::run(Module& M, ModuleAnalysisManager& AM)
 
 bool helper::MakeGlobalGVLocal(Module& M)
 {
-	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << " moduleHash:" << g_ModueHashForLqCppWasm <<"\n";
+	//errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << " moduleHash:" << g_ModueHashForLqCppWasm <<"\n";
 	LLVMContext& context = M.getContext();
 
 	bool modified = false;
@@ -93,6 +93,9 @@ bool helper::MakeGlobalGVLocal(Module& M)
 				Constant* ZeroInit = Constant::getNullValue(Ty);
 				GV.setInitializer(ZeroInit);
 				modified = true;
+
+				errs() << __FUNCTION__ << "    changing to local GV Name:" << GV.getName() << "\n";
+
 			}
 		}
 
