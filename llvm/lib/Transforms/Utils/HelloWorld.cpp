@@ -170,7 +170,7 @@ PreservedAnalyses MkTestModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 //// 			   helper::CreateGetProcFunction(M);
 
 	bool changed = true;
-	changed &= helper::BuildWrapperFunction(M);
+	//changed &= helper::BuildWrapperFunction(M);
 	changed &= helper::PatchFunctionCallVM(M);
 	changed &= helper::CreateCollectAddressFunction(M);
 	changed &= helper::Create_Init_Module_Function(M);
@@ -296,316 +296,12 @@ FunctionType* getWrapperFunctionType(LLVMContext& Context) {
 
 
 
-//void generateWrapperBody(Function* WrapperFunc, Function* TargetFunc, LLVMContext& Context) {
-//	IRBuilder<> Builder(BasicBlock::Create(Context, "entry", WrapperFunc));
-//	auto ArgIter = WrapperFunc->arg_begin();
-//	Value* runtime = ArgIter++;
-//	Value* _ctx = ArgIter++;
-//	Value* _sp = ArgIter++;
-//	Value* _mem = ArgIter++;
-//	Value* funAddress = ArgIter++;
-//
-//	// Setup return value if needed.   如果返回值不是空，则把调用函数的返回值设置到 *sp
-//	Type* retType = TargetFunc->getReturnType();
-//	if (!retType->isVoidTy()) {
-//		if (retType->isIntegerTy(32)) {
-//			// m3ApiReturnType (uint32_t)
-//			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
-//			Builder.CreateStore(Builder.getInt32(0), retPtr); // Placeholder for actual return value
-//		}
-//		else if (retType->isIntegerTy(64)) {
-//			// m3ApiReturnType (uint64_t)
-//			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
-//			Builder.CreateStore(Builder.getInt64(0), retPtr); // Placeholder for actual return value
-//		}
-//	}
-//
-//	std::vector<Value*> Args;
-//	uint32_t spIndex = 0;
-//	for (auto& Arg : TargetFunc->args()) {
-//		Type* ArgType = Arg.getType();
-//		Value* ArgValue = nullptr;
-//		if (ArgType->isPointerTy()) { //如果是指针类型，用* ((uint32_t *) (_sp++))获取偏移值，然后返回 (char*)_mem+offset的移值
-//			// m3ApiGetArgMem
-//			Value* Offset = Builder.CreateLoad(Builder.getInt32Ty(), Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1)));
-//			ArgValue = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _mem, Offset);
-//		}
-//		else //如果是普通类型，直接返回 * ((TYPE *) (_sp++))
-//		{
-//			Value* funcIDValue = builder.getInt32(spIndex);
-//			ArgValue = Builder.CreateLoad(ArgType, Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(0)));
-//		}
-//
-//		++spIndex;
-//		Args.push_back(ArgValue);
-//	}
-//
-//	FunctionType* TargetFTy = TargetFunc->getFunctionType();
-//	Value* Callee = Builder.CreateBitCast(funAddress, TargetFTy->getPointerTo());
-//	Builder.CreateCall(TargetFTy, Callee, Args);
-//
-//	Builder.CreateRet(runtime);
-//}
-
-//void* func_UE(void* runtime, void* _ctx, uint64_t* _sp, void* _mem, void* funAddress)
-void generateWrapperBody(Function* WrapperFunc, Function* TargetFunc, LLVMContext& Context) {
-	IRBuilder<> Builder(BasicBlock::Create(Context, "entry", WrapperFunc));
-	auto ArgIter = WrapperFunc->arg_begin();
-	Value* runtime = ArgIter++;
-	Value* _ctx = ArgIter++;
-	Value* _sp = ArgIter++;
-	Value* _mem = ArgIter++;
-	Value* funAddress = ArgIter++;
-
-	uint32_t spIndex = 0; //sp读取指针
-	// Setup return value if needed.   如果返回值不是空，则把调用函数的返回值设置到 *sp
-	Type* retType = TargetFunc->getReturnType();
-	if (!retType->isVoidTy()) {
-		if (retType->isIntegerTy(32)) {
-			// m3ApiReturnType (uint32_t)
-			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
-			Builder.CreateStore(Builder.getInt32(0), retPtr); // Placeholder for actual return value
-		}
-		else if (retType->isIntegerTy(64)) {
-			// m3ApiReturnType (uint64_t)
-			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
-			Builder.CreateStore(Builder.getInt64(0), retPtr); // Placeholder for actual return value
-		}
-		spIndex++;
-	}
-
-	std::vector<Value*> Args;
-	for (auto& Arg : TargetFunc->args()) {
-		Type* ArgType = Arg.getType();
-		Value* ArgValue = nullptr;
-		if (ArgType->isPointerTy()) { //如果是指针类型，用* ((uint32_t *) (_sp++))获取偏移值，然后返回 (char*)_mem+offset的移值
-			// m3ApiGetArgMem
-			Value* SpIndexValue = Builder.getInt32(spIndex);
-			Value* Offset = Builder.CreateLoad(Builder.getInt32Ty(), Builder.CreateGEP(IntegerType::getInt32Ty(Context), _sp, SpIndexValue));
-			ArgValue = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _mem, Offset);
-		}
-		else //如果是普通类型，直接返回 * ((TYPE *) (_sp++))
-		{
-			Value* SpIndexValue = Builder.getInt32(spIndex);
-			ArgValue = Builder.CreateLoad(ArgType, Builder.CreateGEP(ArgType, _sp, SpIndexValue));
-		}
-
-		++spIndex;
-		Args.push_back(ArgValue);
-	}
-
-	FunctionType* TargetFTy = TargetFunc->getFunctionType();
-	Value* Callee = Builder.CreateBitCast(funAddress, TargetFTy->getPointerTo());
-	//Builder.CreateCall(TargetFTy, Callee, Args);
-
-	if (!retType->isVoidTy()) {
-		// m3ApiReturnType
-		Value* CallResult = Builder.CreateCall(TargetFTy, Callee, Args);
-		Builder.CreateStore(CallResult, Builder.CreateGEP(retType, _sp, Builder.getInt32(0))); //设置返回值到最初的*sp 上
-	}
-	else {
-		Builder.CreateCall(TargetFTy, Callee, Args);
-	}
-
-	// Create the return instruction
-	// Create a global constant string (empty string here)
-	Value* EmptyStr = Builder.CreateGlobalStringPtr("");
-
-	// Return the empty string
-	Builder.CreateRet(EmptyStr); //m3ApiSuccess  return "";
-}
-
-std::set<std::string> g_mapWrapperGVConstuctFunctionNames;
-
- void createGlobalVariable(Module& M, std::string WrapperName, Function* WrapperFunc) {
-// 	// Create struct st_<WrapperName>
-// 	std::string StructName = "GVWrapperSt_" + WrapperName;
-// 	StructType* ST = StructType::create(M.getContext(), StructName);
-// 	ST->setBody({ Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext()) });
-// 
-// 	// Create constructor for struct
-// 	FunctionType* ConstructorType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
-// 	Function* ConstructorFunc = Function::Create(ConstructorType, Function::ExternalLinkage, "__ctor_"+ StructName/* __wrapper_GV_stuct_construct_function_prefix + WrapperName*/, M);
-// 
-// 	g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
-// 
-// 	BasicBlock* ConstructorBB = BasicBlock::Create(M.getContext(), "entry", ConstructorFunc);
-// 	IRBuilder<> Builder(ConstructorBB);
-// 
-// 	uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
-// 	Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
-// 	Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
-// 	Value* Args[] = { ArgWrapperNameHash, FuncPtr };
-// 	Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
-// 	Builder.CreateRetVoid();
-// 
-// 	GlobalVariable* GVar = new GlobalVariable(M, ST, false,
-// 		GlobalValue::ExternalLinkage, nullptr, StructName);
-// 
-////  	// Add COMDAT to GVar
-//	Comdat* C = M.getOrInsertComdat("__ctor_" + StructName);
-//	C->setSelectionKind(Comdat::Any);
-//	ConstructorFunc->setComdat(C);
-//
-//	appendToGlobalCtors(M, ConstructorFunc, 65535);
-//
-//
-//	Comdat* CGVB = M.getOrInsertComdat(StructName);
-//	CGVB->setSelectionKind(Comdat::Any);
-//	GVar->setComdat(CGVB);
-// 
-// 	GVar->setInitializer(ConstantAggregateZero::get(ST));
-
-///////////////////////////////////////////////可以调用但是未解决重复问题
-	//std::string StructName = "GVWrapperSt_" + WrapperName;
-
-	// // 创建一个简单的函数类型，void function(void)
-	//FunctionType* FuncType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
-	//Function* CtorFunc = Function::Create(FuncType, Function::ExternalLinkage, "__ctor_" + StructName, M);
-
-	//g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
-
-	//// 在构造函数中添加简单的打印逻辑（需本机支持 printf 函数）
-	//BasicBlock* BB = BasicBlock::Create(M.getContext(), "entry", CtorFunc);
-	//IRBuilder<> Builder(BB);
-
-	//uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
-	//Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
-	//Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
-
-	//Value* Args[] = { ArgWrapperNameHash, FuncPtr };
-	//Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
-	//Builder.CreateRetVoid();
-
-
-	//// 为函数设置 COMDAT 属性
-	//CtorFunc->setComdat(M.getOrInsertComdat(CtorFunc->getName()));
-
-	//// 将函数添加到全局构造函数列表
-	//appendToGlobalCtors(M, CtorFunc, 0);  //未解决重复问题
-	/////////////////////////////////////////////////可以调用但是未解决重复问题
-
-///////////////////////////////////////////////可以调用但是未解决重复问题----增加函数名参数，定位问题-------------未解决重复问题
-	std::string StructName = "GVWrapperSt_" + WrapperName;
-
-	// 创建一个简单的函数类型，void function(void)
-	FunctionType* FuncType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
-	Function* CtorFunc = Function::Create(FuncType, Function::ExternalLinkage, "__ctor_" + StructName, M);
-
-	g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
-
-	// 在构造函数中添加简单的打印逻辑（需本机支持 printf 函数）
-	BasicBlock* BB = BasicBlock::Create(M.getContext(), "entry", CtorFunc);
-	IRBuilder<> Builder(BB);
-
-	uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
-	Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
-	Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
-
-	Value* FormatStr = Builder.CreateGlobalStringPtr(WrapperName);
-
-	Value* Args[] = { ArgWrapperNameHash, FuncPtr,  FormatStr  };
-	Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
-	Builder.CreateRetVoid();
-
-
-	// 为函数设置 COMDAT 属性
-	CtorFunc->setComdat(M.getOrInsertComdat(CtorFunc->getName()));
-
-	// 将函数添加到全局构造函数列表
-	appendToGlobalCtors(M, CtorFunc, 0);  //未解决重复问题
-	///////////////////////////////////////////////可以调用但是未解决重复问题----增加函数名参数，定位问题----------------未解决重复问题
-
- }
-
-
-bool helper::BuildWrapperFunction(Module& M)
-{
-	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << " moduleHash:" << g_ModueHashForPatch << "\n";
-
-	LLVMContext& Context = M.getContext();
-	IRBuilder<> Builder(Context);
-	std::unordered_map<std::string, Function*> WrapperMap;
-
-	FunctionType* WrapperFTy = getWrapperFunctionType(Context);
-
-	for (Function& F : M.functions()) {
-		// 过滤掉声明或者不需要包装的函数
-		if (F.empty() || F.isDeclaration() || F.isIntrinsic())
-		{
-			errs() << "skip_func:" << F.getName() << "\n";
-			continue;
-		}
-
-		std::string Signature = getFunctionSignature(&F);
-		//Function* WrapperFunc = nullptr;
-
-		if (WrapperMap.find(Signature) == WrapperMap.end()) {
-
-// 			WrapperFunc = Function::Create(WrapperFTy, GlobalValue::ExternalLinkage, Signature, &M);
-// 
-// 			// 添加 COMDAT 属性
-// 			const std::string ComdatName = Signature + "_comdat";
-// 			M.getOrInsertComdat(ComdatName)->setSelectionKind(Comdat::Any);
-// 			WrapperFunc->setComdat(M.getOrInsertComdat(ComdatName));
-// 
-// 				// Create the function body
-// 			BasicBlock* EntryBB = BasicBlock::Create(Context, "entry", WrapperFunc);
-// 			IRBuilder<> Builder(EntryBB);
-// 
-// 			// return the runtime pointer
-// 			Builder.CreateRet(WrapperFunc->arg_begin());
-// 
-// 			WrapperMap[Signature] = WrapperFunc;
-			Function* WrapperFunc = Function::Create(WrapperFTy, GlobalValue::ExternalLinkage, Signature, &M);
-
-			// 使用相同的 Comdat 对象进行设置
-			Comdat* C = M.getOrInsertComdat(Signature);
-			C->setSelectionKind(Comdat::Any);
-			WrapperFunc->setComdat(C);
-
-			// Create the function body ---test body
-			//BasicBlock* EntryBB = BasicBlock::Create(Context, "entry", WrapperFunc);
-			//IRBuilder<> Builder(EntryBB);
-			//// return the runtime pointer
-			//Builder.CreateRet(WrapperFunc->arg_begin());
-			// Create the function body ---test body
-
-			generateWrapperBody(WrapperFunc, &F, Context);
-
-			// Create a COMDAT for this wrapper function
-			createGlobalVariable(M, Signature, WrapperFunc);
-
-			WrapperMap[Signature] = WrapperFunc;
-		}
-	}
-
-	errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << "\n";
-	return true;
-}
-
-
 // 给每个函数分配一个数字ID //整个module里面的函数id是基于g_funcID递增的
 int g_funcID = 0;
 
-bool IsWrapperFunction(Function& F)
-{
-	std::string origFuncName = F.getName().str();
-	if (origFuncName.rfind(WrapperFuncStartStr, 0) ==0) //是否以WrapperFuncStartStr 开头
-	{
-		return true;
-	}
+bool IsWrapperFunction(Function& F){return false;}
 
-// 	if (origFuncName.rfind(__wrapper_GV_stuct_construct_function_prefix, 0) == 0) //不是wrapper函数全局变量struct的构造函数
-// 	{
-// 		return true;
-// 	}
-	if (g_mapWrapperGVConstuctFunctionNames.find(origFuncName) != g_mapWrapperGVConstuctFunctionNames.end())
-	{
-		return true;
-	}
-	return false;
-}
+
 
 bool helper::PatchFunctionCallVM(Module& M)
 {
@@ -1030,3 +726,309 @@ bool helper::Create_Init_Module_Function(Module& M)
 
 }
 
+//bool IsWrapperFunction(Function& F)
+//{
+//	std::string origFuncName = F.getName().str();
+//	if (origFuncName.rfind(WrapperFuncStartStr, 0) == 0) //是否以WrapperFuncStartStr 开头
+//	{
+//		return true;
+//	}
+//
+//	// 	if (origFuncName.rfind(__wrapper_GV_stuct_construct_function_prefix, 0) == 0) //不是wrapper函数全局变量struct的构造函数
+//	// 	{
+//	// 		return true;
+//	// 	}
+//	if (g_mapWrapperGVConstuctFunctionNames.find(origFuncName) != g_mapWrapperGVConstuctFunctionNames.end())
+//	{
+//		return true;
+//	}
+//	return false;
+//}
+
+//void generateWrapperBody(Function* WrapperFunc, Function* TargetFunc, LLVMContext& Context) {
+//	IRBuilder<> Builder(BasicBlock::Create(Context, "entry", WrapperFunc));
+//	auto ArgIter = WrapperFunc->arg_begin();
+//	Value* runtime = ArgIter++;
+//	Value* _ctx = ArgIter++;
+//	Value* _sp = ArgIter++;
+//	Value* _mem = ArgIter++;
+//	Value* funAddress = ArgIter++;
+//
+//	// Setup return value if needed.   如果返回值不是空，则把调用函数的返回值设置到 *sp
+//	Type* retType = TargetFunc->getReturnType();
+//	if (!retType->isVoidTy()) {
+//		if (retType->isIntegerTy(32)) {
+//			// m3ApiReturnType (uint32_t)
+//			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
+//			Builder.CreateStore(Builder.getInt32(0), retPtr); // Placeholder for actual return value
+//		}
+//		else if (retType->isIntegerTy(64)) {
+//			// m3ApiReturnType (uint64_t)
+//			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
+//			Builder.CreateStore(Builder.getInt64(0), retPtr); // Placeholder for actual return value
+//		}
+//	}
+//
+//	std::vector<Value*> Args;
+//	uint32_t spIndex = 0;
+//	for (auto& Arg : TargetFunc->args()) {
+//		Type* ArgType = Arg.getType();
+//		Value* ArgValue = nullptr;
+//		if (ArgType->isPointerTy()) { //如果是指针类型，用* ((uint32_t *) (_sp++))获取偏移值，然后返回 (char*)_mem+offset的移值
+//			// m3ApiGetArgMem
+//			Value* Offset = Builder.CreateLoad(Builder.getInt32Ty(), Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1)));
+//			ArgValue = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _mem, Offset);
+//		}
+//		else //如果是普通类型，直接返回 * ((TYPE *) (_sp++))
+//		{
+//			Value* funcIDValue = builder.getInt32(spIndex);
+//			ArgValue = Builder.CreateLoad(ArgType, Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(0)));
+//		}
+//
+//		++spIndex;
+//		Args.push_back(ArgValue);
+//	}
+//
+//	FunctionType* TargetFTy = TargetFunc->getFunctionType();
+//	Value* Callee = Builder.CreateBitCast(funAddress, TargetFTy->getPointerTo());
+//	Builder.CreateCall(TargetFTy, Callee, Args);
+//
+//	Builder.CreateRet(runtime);
+//}
+
+//void* func_UE(void* runtime, void* _ctx, uint64_t* _sp, void* _mem, void* funAddress)
+//void generateWrapperBody(Function* WrapperFunc, Function* TargetFunc, LLVMContext& Context) {
+//	IRBuilder<> Builder(BasicBlock::Create(Context, "entry", WrapperFunc));
+//	auto ArgIter = WrapperFunc->arg_begin();
+//	Value* runtime = ArgIter++;
+//	Value* _ctx = ArgIter++;
+//	Value* _sp = ArgIter++;
+//	Value* _mem = ArgIter++;
+//	Value* funAddress = ArgIter++;
+//
+//	uint32_t spIndex = 0; //sp读取指针
+//	// Setup return value if needed.   如果返回值不是空，则把调用函数的返回值设置到 *sp
+//	Type* retType = TargetFunc->getReturnType();
+//	if (!retType->isVoidTy()) {
+//		if (retType->isIntegerTy(32)) {
+//			// m3ApiReturnType (uint32_t)
+//			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
+//			Builder.CreateStore(Builder.getInt32(0), retPtr); // Placeholder for actual return value
+//		}
+//		else if (retType->isIntegerTy(64)) {
+//			// m3ApiReturnType (uint64_t)
+//			Value* retPtr = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _sp, Builder.getInt32(1));
+//			Builder.CreateStore(Builder.getInt64(0), retPtr); // Placeholder for actual return value
+//		}
+//		spIndex++;
+//	}
+//
+//	std::vector<Value*> Args;
+//	for (auto& Arg : TargetFunc->args()) {
+//		Type* ArgType = Arg.getType();
+//		Value* ArgValue = nullptr;
+//		if (ArgType->isPointerTy()) { //如果是指针类型，用* ((uint32_t *) (_sp++))获取偏移值，然后返回 (char*)_mem+offset的移值
+//			// m3ApiGetArgMem
+//			Value* SpIndexValue = Builder.getInt32(spIndex);
+//			Value* Offset = Builder.CreateLoad(Builder.getInt32Ty(), Builder.CreateGEP(IntegerType::getInt32Ty(Context), _sp, SpIndexValue));
+//			ArgValue = Builder.CreateGEP(IntegerType::getInt8PtrTy(Context), _mem, Offset);
+//		}
+//		else //如果是普通类型，直接返回 * ((TYPE *) (_sp++))
+//		{
+//			Value* SpIndexValue = Builder.getInt32(spIndex);
+//			ArgValue = Builder.CreateLoad(ArgType, Builder.CreateGEP(ArgType, _sp, SpIndexValue));
+//		}
+//
+//		++spIndex;
+//		Args.push_back(ArgValue);
+//	}
+//
+//	FunctionType* TargetFTy = TargetFunc->getFunctionType();
+//	Value* Callee = Builder.CreateBitCast(funAddress, TargetFTy->getPointerTo());
+//	//Builder.CreateCall(TargetFTy, Callee, Args);
+//
+//	if (!retType->isVoidTy()) {
+//		// m3ApiReturnType
+//		Value* CallResult = Builder.CreateCall(TargetFTy, Callee, Args);
+//		Builder.CreateStore(CallResult, Builder.CreateGEP(retType, _sp, Builder.getInt32(0))); //设置返回值到最初的*sp 上
+//	}
+//	else {
+//		Builder.CreateCall(TargetFTy, Callee, Args);
+//	}
+//
+//	// Create the return instruction
+//	// Create a global constant string (empty string here)
+//	Value* EmptyStr = Builder.CreateGlobalStringPtr("");
+//
+//	// Return the empty string
+//	Builder.CreateRet(EmptyStr); //m3ApiSuccess  return "";
+//}
+
+//std::set<std::string> g_mapWrapperGVConstuctFunctionNames;
+
+// void createWrapperGlobalVariable(Module& M, std::string WrapperName, Function* WrapperFunc) {
+//// 	// Create struct st_<WrapperName>
+//// 	std::string StructName = "GVWrapperSt_" + WrapperName;
+//// 	StructType* ST = StructType::create(M.getContext(), StructName);
+//// 	ST->setBody({ Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext()) });
+//// 
+//// 	// Create constructor for struct
+//// 	FunctionType* ConstructorType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+//// 	Function* ConstructorFunc = Function::Create(ConstructorType, Function::ExternalLinkage, "__ctor_"+ StructName/* __wrapper_GV_stuct_construct_function_prefix + WrapperName*/, M);
+//// 
+//// 	g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
+//// 
+//// 	BasicBlock* ConstructorBB = BasicBlock::Create(M.getContext(), "entry", ConstructorFunc);
+//// 	IRBuilder<> Builder(ConstructorBB);
+//// 
+//// 	uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
+//// 	Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
+//// 	Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
+//// 	Value* Args[] = { ArgWrapperNameHash, FuncPtr };
+//// 	Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
+//// 	Builder.CreateRetVoid();
+//// 
+//// 	GlobalVariable* GVar = new GlobalVariable(M, ST, false,
+//// 		GlobalValue::ExternalLinkage, nullptr, StructName);
+//// 
+//////  	// Add COMDAT to GVar
+////	Comdat* C = M.getOrInsertComdat("__ctor_" + StructName);
+////	C->setSelectionKind(Comdat::Any);
+////	ConstructorFunc->setComdat(C);
+////
+////	appendToGlobalCtors(M, ConstructorFunc, 65535);
+////
+////
+////	Comdat* CGVB = M.getOrInsertComdat(StructName);
+////	CGVB->setSelectionKind(Comdat::Any);
+////	GVar->setComdat(CGVB);
+//// 
+//// 	GVar->setInitializer(ConstantAggregateZero::get(ST));
+//
+/////////////////////////////////////////////////可以调用但是未解决重复问题
+//	//std::string StructName = "GVWrapperSt_" + WrapperName;
+//
+//	// // 创建一个简单的函数类型，void function(void)
+//	//FunctionType* FuncType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+//	//Function* CtorFunc = Function::Create(FuncType, Function::ExternalLinkage, "__ctor_" + StructName, M);
+//
+//	//g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
+//
+//	//// 在构造函数中添加简单的打印逻辑（需本机支持 printf 函数）
+//	//BasicBlock* BB = BasicBlock::Create(M.getContext(), "entry", CtorFunc);
+//	//IRBuilder<> Builder(BB);
+//
+//	//uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
+//	//Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
+//	//Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
+//
+//	//Value* Args[] = { ArgWrapperNameHash, FuncPtr };
+//	//Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
+//	//Builder.CreateRetVoid();
+//
+//
+//	//// 为函数设置 COMDAT 属性
+//	//CtorFunc->setComdat(M.getOrInsertComdat(CtorFunc->getName()));
+//
+//	//// 将函数添加到全局构造函数列表
+//	//appendToGlobalCtors(M, CtorFunc, 0);  //未解决重复问题
+//	/////////////////////////////////////////////////可以调用但是未解决重复问题
+//
+/////////////////////////////////////////////////可以调用但是未解决重复问题----增加函数名参数，定位问题-------------未解决重复问题
+//	std::string StructName = "GVWrapperSt_" + WrapperName;
+//
+//	// 创建一个简单的函数类型，void function(void)
+//	FunctionType* FuncType = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+//	Function* CtorFunc = Function::Create(FuncType, Function::ExternalLinkage, "__ctor_" + StructName, M);
+//
+//	g_mapWrapperGVConstuctFunctionNames.insert("__ctor_" + StructName);
+//
+//	// 在构造函数中添加简单的打印逻辑（需本机支持 printf 函数）
+//	BasicBlock* BB = BasicBlock::Create(M.getContext(), "entry", CtorFunc);
+//	IRBuilder<> Builder(BB);
+//
+//	uint64 WrapperNameHash = CityHash64(WrapperName.c_str(), WrapperName.size());
+//	Constant* ArgWrapperNameHash = ConstantInt::get(Type::getInt64Ty(M.getContext()), WrapperNameHash);
+//	Constant* FuncPtr = ConstantExpr::getBitCast(WrapperFunc, Type::getInt8PtrTy(M.getContext()));
+//
+//	Value* FormatStr = Builder.CreateGlobalStringPtr(WrapperName);
+//
+//	Value* Args[] = { ArgWrapperNameHash, FuncPtr,  FormatStr  };
+//	Builder.CreateCall(M.getOrInsertFunction("register_wrapper_func", Type::getVoidTy(M.getContext()), Type::getInt64Ty(M.getContext()), Type::getInt8PtrTy(M.getContext()), Type::getInt8PtrTy(M.getContext())), Args);
+//	Builder.CreateRetVoid();
+//
+//
+//	// 为函数设置 COMDAT 属性
+//	CtorFunc->setComdat(M.getOrInsertComdat(CtorFunc->getName()));
+//
+//	// 将函数添加到全局构造函数列表
+//	appendToGlobalCtors(M, CtorFunc, 0);  //未解决重复问题
+//	///////////////////////////////////////////////可以调用但是未解决重复问题----增加函数名参数，定位问题----------------未解决重复问题
+//
+// }
+
+
+//bool helper::BuildWrapperFunction(Module& M)
+//{
+//	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << " moduleHash:" << g_ModueHashForPatch << "\n";
+//
+//	LLVMContext& Context = M.getContext();
+//	IRBuilder<> Builder(Context);
+//	std::unordered_map<std::string, Function*> WrapperMap;
+//
+//	FunctionType* WrapperFTy = getWrapperFunctionType(Context);
+//
+//	for (Function& F : M.functions()) {
+//		// 过滤掉声明或者不需要包装的函数
+//		if (F.empty() || F.isDeclaration() || F.isIntrinsic())
+//		{
+//			errs() << "skip_func:" << F.getName() << "\n";
+//			continue;
+//		}
+//
+//		std::string Signature = getFunctionSignature(&F);
+//		//Function* WrapperFunc = nullptr;
+//
+//		if (WrapperMap.find(Signature) == WrapperMap.end()) {
+//
+//// 			WrapperFunc = Function::Create(WrapperFTy, GlobalValue::ExternalLinkage, Signature, &M);
+//// 
+//// 			// 添加 COMDAT 属性
+//// 			const std::string ComdatName = Signature + "_comdat";
+//// 			M.getOrInsertComdat(ComdatName)->setSelectionKind(Comdat::Any);
+//// 			WrapperFunc->setComdat(M.getOrInsertComdat(ComdatName));
+//// 
+//// 				// Create the function body
+//// 			BasicBlock* EntryBB = BasicBlock::Create(Context, "entry", WrapperFunc);
+//// 			IRBuilder<> Builder(EntryBB);
+//// 
+//// 			// return the runtime pointer
+//// 			Builder.CreateRet(WrapperFunc->arg_begin());
+//// 
+//// 			WrapperMap[Signature] = WrapperFunc;
+//			Function* WrapperFunc = Function::Create(WrapperFTy, GlobalValue::ExternalLinkage, Signature, &M);
+//
+//			// 使用相同的 Comdat 对象进行设置
+//			Comdat* C = M.getOrInsertComdat(Signature);
+//			C->setSelectionKind(Comdat::Any);
+//			WrapperFunc->setComdat(C);
+//
+//			// Create the function body ---test body
+//			//BasicBlock* EntryBB = BasicBlock::Create(Context, "entry", WrapperFunc);
+//			//IRBuilder<> Builder(EntryBB);
+//			//// return the runtime pointer
+//			//Builder.CreateRet(WrapperFunc->arg_begin());
+//			// Create the function body ---test body
+//
+//			generateWrapperBody(WrapperFunc, &F, Context);
+//
+//			// Create a COMDAT for this wrapper function
+//			createWrapperGlobalVariable(M, Signature, WrapperFunc);
+//
+//			WrapperMap[Signature] = WrapperFunc;
+//		}
+//	}
+//
+//	errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << "\n";
+//	return true;
+//}
