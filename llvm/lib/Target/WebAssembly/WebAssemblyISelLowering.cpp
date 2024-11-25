@@ -597,7 +597,7 @@ LowerCallResults(MachineInstr &CallResults, DebugLoc DL, MachineBasicBlock *BB,
     //        TII.get(WebAssembly::I32_WRAP_I64), Reg32)
     //    .addReg(FnPtr.getReg());
     //FnPtr.setReg(Reg32);
-  }
+  //}
 
   // Move the function pointer to the end of the arguments for indirect calls
   if (IsIndirect) {
@@ -1609,12 +1609,13 @@ SDValue WebAssemblyTargetLowering::LowerRETURNADDR(SDValue Op,
                                                    SelectionDAG &DAG) const {
   SDLoc DL(Op);
 
-//   if (!Subtarget->getTargetTriple().isOSEmscripten()) {
-//     fail(DL, DAG,
-//          "Non-Emscripten WebAssembly hasn't implemented "
-//          "__builtin_return_address");
-//     return SDValue();
-//   }
+  //默认打开
+  if (!Subtarget->getTargetTriple().isOSEmscripten()) {
+	  fail(DL, DAG,
+		  "Non-Emscripten WebAssembly hasn't implemented "
+		  "__builtin_return_address");
+	  return SDValue();
+  }
 
   if (verifyReturnAddressArgumentIsConstant(Op, DAG))
     return SDValue();
