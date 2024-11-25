@@ -328,7 +328,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 		__str_g_needpatch_lqcppReload + std::to_string(g_ModueHashForPatch));
 
 	// 创建CallVm函数原型 bool CallVm( /*char* strFunName,*/ void* pParameters, int paraCount, int funcID)    pParameters是栈上的原函数参数组成的数据
-	FunctionType* callVmType = FunctionType::get(Type::getInt32Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt64PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
+	FunctionType* callVmType = FunctionType::get(Type::getInt64Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt64PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
 	Function* callVmFunc = Function::Create(callVmType, GlobalValue::ExternalLinkage, _str_LQCallVm, M);
 
 	for (Function& F : M) {
@@ -405,14 +405,71 @@ bool helper::PatchFunctionCallVM(Module& M)
 		Value* ArgCount = builder.getInt32(args.size());
 		//Value* funcIDValue = builder.getInt32(funcID);
 		Value* callVmArgs[] = { /*funcName,*/ paras, ArgCount, funcIDValue };
-		builder.CreateCall(callVmType, callVmFunc, callVmArgs);
+		Value* VmReturnValue = builder.CreateCall(callVmType, callVmFunc, callVmArgs); //vm函数返回值是uint64类型
 
-		//return
+		// Get the current function's return type
+		Type* CurFReturnType = F.getReturnType();
+
+		//处理返回值
 		if (F.getReturnType()->isVoidTy()) {
 			builder.CreateRetVoid();
 		}
 		else {
-			builder.CreateRet(Constant::getNullValue(F.getReturnType()));
+			//builder.CreateRet(VmReturnValue/*Constant::getNullValue(F.getReturnType())*/);
+			Value* ConvertedReturnValue = VmReturnValue;
+
+			// If the types differ, perform a cast
+			if (CurFReturnType != VmReturnValue->getType()) {
+				if (CurFReturnType->isIntegerTy() /*&& VmReturnValue->getType()->isIntegerTy()*/) {
+					// Integer to integer cast
+					ConvertedReturnValue = builder.CreateIntCast(VmReturnValue, CurFReturnType, false);
+				}
+				else if (CurFReturnType->isFloatingPointTy() /*&& VmReturnValue->getType()->isFloatingPointTy()*/) {
+					//ConvertedReturnValue = builder.CreateSIToFP(VmReturnValue, CurFReturnType, "toFloat"); 可以转，但是数据不对：cvtsi2sd xmm6,rax rax:0x40132d0e56041894 4.794 。最后日志打印的double数据不对
+					Value* ConvertedDoubleValue = builder.CreateBitCast(VmReturnValue, Type::getDoubleTy(context), "bitcastToDouble");
+
+					//先把VmReturnValue返回值转为double，因为VmReturnValue返回uint64，和double都是64bit宽度的。可以转。
+					//然后再把double转成对应的float等
+					switch (CurFReturnType->getTypeID()) {
+					case Type::TypeID::DoubleTyID:
+						ConvertedReturnValue = ConvertedDoubleValue;
+						break;
+					case Type::TypeID::FloatTyID:
+					{
+						Value* FloatValue = builder.CreateFPTrunc(ConvertedDoubleValue, Type::getFloatTy(context), "doubleToFloat");
+						ConvertedReturnValue = FloatValue;
+					}
+						break;
+					case Type::TypeID::HalfTyID:
+					{
+						Value* HalfValue = builder.CreateFPTrunc(ConvertedDoubleValue, Type::getHalfTy(context), "doubleToHalf");
+						ConvertedReturnValue = HalfValue;
+					}
+						break;
+					case Type::TypeID::BFloatTyID:
+					{
+						Value* BFFloatValue = builder.CreateFPTrunc(ConvertedDoubleValue, Type::getBFloatTy(context), "doubleToBFloat");
+						ConvertedReturnValue = BFFloatValue;
+					}
+						break;
+					case Type::TypeID::FP128TyID:
+					default:
+						ConvertedReturnValue = Constant::getNullValue(F.getReturnType());
+						break;
+					}
+				}
+				else if (CurFReturnType->isPointerTy() /*&& VmReturnValue->getType()->isPointerTy()*/) {
+					// Pointer to pointer cast
+					ConvertedReturnValue = builder.CreateBitOrPointerCast(VmReturnValue, CurFReturnType);
+				}
+				else {
+					errs() << "Unsupported return type conversion\n";
+					ConvertedReturnValue = Constant::getNullValue(F.getReturnType());
+				}
+			}
+
+			// Return the possibly converted value
+			builder.CreateRet(ConvertedReturnValue);
 		}
 
 		//patch 逻辑
