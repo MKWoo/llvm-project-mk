@@ -1609,13 +1609,13 @@ SDValue WebAssemblyTargetLowering::LowerRETURNADDR(SDValue Op,
                                                    SelectionDAG &DAG) const {
   SDLoc DL(Op);
 
-  //默认打开
-  if (!Subtarget->getTargetTriple().isOSEmscripten()) {
-	  fail(DL, DAG,
-		  "Non-Emscripten WebAssembly hasn't implemented "
-		  "__builtin_return_address");
-	  return SDValue();
-  }
+  //默认打开的--为了关闭错误，注释此逻辑 -minkee add
+//   if (!Subtarget->getTargetTriple().isOSEmscripten()) {
+// 	  fail(DL, DAG,
+// 		  "Non-Emscripten WebAssembly hasn't implemented "
+// 		  "__builtin_return_address");
+// 	  return SDValue();
+//   }
 
   if (verifyReturnAddressArgumentIsConstant(Op, DAG))
     return SDValue();

@@ -83,6 +83,7 @@ add_llvm_component_library(LLVMTransformUtils
   Utils.cpp
   ValueMapper.cpp
   VNCoercion.cpp
+  LqCppReload.cpp
   LqCppWasm.cpp
   city.cpp
 

@@ -127,7 +127,7 @@ MODULE_PASS("sanmd-module", SanitizerBinaryMetadataPass())
 MODULE_PASS("memprof-module", ModuleMemProfilerPass())
 MODULE_PASS("poison-checking", PoisonCheckingPass())
 MODULE_PASS("pseudo-probe-update", PseudoProbeUpdatePass())
-MODULE_PASS("mktest", MkTestModulePass())
+MODULE_PASS("LqCppReload", LqCppReloadModulePass())
 MODULE_PASS("LqCppWasm", LqCppWasmModulePass())
 #undef MODULE_PASS
 
