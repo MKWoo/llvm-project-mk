@@ -62,7 +62,6 @@ PreservedAnalyses LqCppWasmModulePass::run(Module& M, ModuleAnalysisManager& AM)
 }
 
 
-
 bool helper::MakeGlobalGVLocal(Module& M)
 {
 	//errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << " moduleHash:" << g_ModueHashForLqCppWasm <<"\n";
