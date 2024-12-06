@@ -17,6 +17,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/CommandLine.h"
 
 #include "llvm/Transforms/Utils/city.h"
 #include <fcntl.h>
@@ -37,16 +38,38 @@
 using namespace llvm;
 
 
+#define defUSeSymDataOffset 1 //用nm的符号文件,而不是收集函数 . 为1的话，只收集函数的signature
+
+//LqRldSaveDir="your_value"
+static llvm::cl::opt<std::string> LqCppRldOption(
+	"LqRldSaveDir",
+	llvm::cl::desc("This is LqRldSaveDir for my pass"),
+	llvm::cl::value_desc("LqRldSaveDir value"),
+	llvm::cl::init("default value")
+);
+
+//LqRldSaveDir="your_value"
+static llvm::cl::opt<bool> LqCppRldNeedSave(
+	"LqRldSave",
+	llvm::cl::desc("This is LqCppRldNeedSave for my pass"),
+	llvm::cl::value_desc("LqCppRldNeedSave value"),
+	llvm::cl::init(false)
+);
 
 namespace helper
 {
 	Constant* CreateGlobalVariable(Module& module, StringRef globalVariableName);
 
 	bool PatchFunctionCallVM(Module& module);
+
+#if defUSeSymDataOffset
+	bool CollectFunctionSignature(Module& module);
+#else
 	bool CreateCollectAddressFunction(Module& module);
+#endif
 	bool Create_Init_Module_Function(Module& module);
 
-	bool BuildWrapperFunction(Module& module);
+	//bool BuildWrapperFunction(Module& module);
 
 
 } // namespace helper
@@ -143,8 +166,11 @@ uint32_t  g_AddressCollectedCount = 0; //收集的函数/全局变量地址  总
 #define _str_LQCallVm "LQCallVm"
 
 #define __str_g_needpatch_lqcppReload "g_needpatch_lqcppReload_"
+
+#if !defUSeSymDataOffset
 #define __str_CollectAddressFunction "CollectAddressFunction_"
-#define __wrapper_GV_stuct_construct_function_prefix "__ConstuctSt_"
+#endif
+//#define __wrapper_GV_stuct_construct_function_prefix "__ConstuctSt_"
 
 PreservedAnalyses LqCppReloadModulePass::run(Module& M, ModuleAnalysisManager& AM) {
 	std::string input_str =  M.getSourceFileName();
@@ -152,21 +178,18 @@ PreservedAnalyses LqCppReloadModulePass::run(Module& M, ModuleAnalysisManager& A
 	// 使用 CityHash64 计算 64 位哈希值
 	g_ModueHashForPatch = CityHash64(input_str.c_str(), input_str.size());
 
-	errs() << "####### Start_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() <<"  moduleHash:" << g_ModueHashForPatch <<"\n";
-
-//	bool changed = true;
-//	changed &= helper::PatchFunctionCallVM(M);
-//	changed &= helper::CreateCollectAddressFunction(M);
-//	changed &= helper::Create_Init_Module_Function(M);
-//	changed &= helper::BuildWrapperFunction(M);
-//	//changed &= helper::CreateCollectAddressFunction(M);
-//// 	changed &= helper::BuildWrapperFunction(M);
-//// 			   helper::CreateGetProcFunction(M);
+	errs() << "####### Start_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() <<"  moduleHash:" << g_ModueHashForPatch << " LqCppRldOption:"<<LqCppRldOption <<"\n";
 
 	bool changed = true;
 	//changed &= helper::BuildWrapperFunction(M);
 	changed &= helper::PatchFunctionCallVM(M);
+
+#if defUSeSymDataOffset
+	changed &= helper::CollectFunctionSignature(M);
+#else
 	changed &= helper::CreateCollectAddressFunction(M);
+#endif
+
 	changed &= helper::Create_Init_Module_Function(M);
 
 	errs() << "\n" << "####### End_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() << "\n\n\n";
@@ -226,26 +249,9 @@ const char* TypeID_str_oneAlpha[]{
 };
 
 
-std::string getTypeName(Type* Ty) {
-	if (Ty->getTypeID()>llvm::Type::TypeID::TargetExtTyID)
-	{
-		int*p =0;*p=0; //force crash
-	}
-
-	std::string strType = TypeID_str[Ty->getTypeID()];
-	return strType;
-}
 
 
-#define WrapperFuncStartStr "wrapper_"
 
-std::string getFunctionSignature(Function* F) {
-	std::string Signature = WrapperFuncStartStr/*"wrapper_"*/ + getTypeName(F->getReturnType());
-	for (auto& Arg : F->args()) {
-		Signature += "_" + getTypeName(Arg.getType());
-	}
-	return Signature;
-}
 
 std::string getTypeNameOneAlpha(Type* Ty) {
 	if (Ty->getTypeID() > llvm::Type::TypeID::TargetExtTyID)
@@ -269,25 +275,48 @@ std::string getFunctionTypeShortDesc(Function& F) {
 	return Signature;
 }
 
-uint64 FromFuncGetWrapperFuncSignatureHash(Function& F)
-{
-	std::string funcSignature = getFunctionSignature(&F);
-	uint64 WrapperNameHash = CityHash64(funcSignature.c_str(), funcSignature.size());
-	return WrapperNameHash;
-}	
+
+/////////////////////////////////////////////////////WrapperFun相关 --废弃
+
+//std::string getTypeName(Type* Ty) {
+//	if (Ty->getTypeID() > llvm::Type::TypeID::TargetExtTyID)
+//	{
+//		int* p = 0; *p = 0; //force crash
+//	}
+//
+//	std::string strType = TypeID_str[Ty->getTypeID()];
+//	return strType;
+//}
+
+//#define WrapperFuncStartStr "wrapper_"
+//
+//std::string getFunctionSignature(Function* F) {
+//	std::string Signature = WrapperFuncStartStr/*"wrapper_"*/ + getTypeName(F->getReturnType());
+//	for (auto& Arg : F->args()) {
+//		Signature += "_" + getTypeName(Arg.getType());
+//	}
+//	return Signature;
+//}
+
+//uint64 FromFuncGetWrapperFuncSignatureHash(Function& F)
+//{
+//	std::string funcSignature = getFunctionSignature(&F);
+//	uint64 WrapperNameHash = CityHash64(funcSignature.c_str(), funcSignature.size());
+//	return WrapperNameHash;
+//}	
 
 
-//void * func_UE(void * runtime, void * _ctx, uint64_t * _sp, void * _mem, void* funAddress)
-FunctionType* getWrapperFunctionType(LLVMContext& Context) {
-	return FunctionType::get(Type::getInt8PtrTy(Context), {
-		Type::getInt8PtrTy(Context), // runtime
-		Type::getInt8PtrTy(Context), // _ctx
-		Type::getInt64PtrTy(Context), // _sp
-		Type::getInt8PtrTy(Context),  // _mem
-		Type::getInt8PtrTy(Context)   // funAddress
-		}, false);
-}
-
+////void * func_UE(void * runtime, void * _ctx, uint64_t * _sp, void * _mem, void* funAddress)
+//FunctionType* getWrapperFunctionType(LLVMContext& Context) {
+//	return FunctionType::get(Type::getInt8PtrTy(Context), {
+//		Type::getInt8PtrTy(Context), // runtime
+//		Type::getInt8PtrTy(Context), // _ctx
+//		Type::getInt64PtrTy(Context), // _sp
+//		Type::getInt8PtrTy(Context),  // _mem
+//		Type::getInt8PtrTy(Context)   // funAddress
+//		}, false);
+//}
+/////////////////////////////////////////////////////WrapperFun相关 --废弃
 
 
 // 给每个函数分配一个数字ID //整个module里面的函数id是基于g_funcID递增的
@@ -475,49 +504,59 @@ bool helper::PatchFunctionCallVM(Module& M)
 	return true;
 }
 
+
+
+
+/// <收集信息定义>
 //collect address
 enum emCollectType
 {
-	em_type_function =0,
+	em_type_function = 0,
 	em_type_globalValue = 1,
 };
-
 
 struct CollectItemInfo
 {
 	uint32_t collectIndex = 0; //在数组的存放index，调用Builder.CreateStore时index +1。 当前collectIndex的最大值决定回调CollectAddressFunction时，需要new的数组大小
 	uint32_t collectType = 0; //函数或全局变量 emCollectType
-	std::string funcWrapperSignature; //PQS 返回值类型+参数类型//wrapper_VoidTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID 字符串函数，wrapper_+函数返回值类型+参数类型
+	std::string funcSignature; //PQS 返回值类型+参数类型//wrapper_VoidTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID 字符串函数，wrapper_+函数返回值类型+参数类型
 
 	CollectItemInfo() :collectIndex(0), collectType(0)
 	{}
-	CollectItemInfo(const CollectItemInfo& other) :collectIndex(other.collectIndex), collectType(other.collectType), funcWrapperSignature(other.funcWrapperSignature)
+	CollectItemInfo(const CollectItemInfo& other) :collectIndex(other.collectIndex), collectType(other.collectType), funcSignature(other.funcSignature)
 	{}
-	CollectItemInfo(uint32_t collectIndex_in, uint32_t collectType_in, std::string funcWrapperSignature_in) :collectIndex(collectIndex_in), collectType(collectType_in), funcWrapperSignature(funcWrapperSignature_in)
+	CollectItemInfo(uint32_t collectIndex_in, uint32_t collectType_in, std::string funcSignature_in) :collectIndex(collectIndex_in), collectType(collectType_in), funcSignature(funcSignature_in)
 	{}
 };
-
 
 struct stSavedCollectInfo //序列化数据到本地
 {
 	uint64_t moduleHash;
 	std::map<std::string, CollectItemInfo> mapCollectAddressData; //Name:?MinkeeTestFunc@@YA_NPEB_W@Z        patch_function id:109  //记录index 和名字关系，
 
-	stSavedCollectInfo():moduleHash(0){}
+	stSavedCollectInfo() :moduleHash(0) {}
 };
 
 stSavedCollectInfo g_collectInfo; //序列化数据到本地
+/// <收集信息定义>
+
 
 // 文件锁定
 std::mutex fileMutex;
 
 // 保存到二进制文件（追加）
-void saveToBinaryFile(const std::string& filename) {
+void saveCollectDataToBinaryFile(const std::string& filename) {
+
+	if (!LqCppRldNeedSave)
+	{
+		errs() << "\n" << "** " << __FUNCTION__ << " **DoNot need Save:" << filename << " hash:" << g_collectInfo.moduleHash <<"\n";	
+		return ;
+	}
 
 	std::lock_guard<std::mutex> lock(fileMutex);
 
 #if defined(__APPLE__)
-	int fd = open(filename.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0666);
+	int fd = open(filename.c_str(), O_WRONLY | O_CREAT /*| O_APPEND*/, 0666);
 	if (fd == -1) {
 		std::cerr << "Failed to open the file." << std::endl;
 		return;
@@ -541,7 +580,7 @@ void saveToBinaryFile(const std::string& filename) {
 	}
 #endif
 
-	std::ofstream outFile(filename, std::ios::binary | std::ios::app);
+	std::ofstream outFile(filename, std::ios::binary/* | std::ios::app*/);
 	outFile.write(reinterpret_cast<const char*>(&g_collectInfo.moduleHash), sizeof(g_collectInfo.moduleHash));
 
 	size_t mapSize = g_collectInfo.mapCollectAddressData.size();
@@ -554,11 +593,12 @@ void saveToBinaryFile(const std::string& filename) {
 		outFile.write(reinterpret_cast<const char*>(&value.collectIndex), sizeof(value.collectIndex));
 		outFile.write(reinterpret_cast<const char*>(&value.collectType), sizeof(value.collectType));
 		//outFile.write(reinterpret_cast<const char*>(&value.funcWrapperSignatureHash), sizeof(value.funcWrapperSignatureHash));
-		size_t funcWrapperSignatureSize = value.funcWrapperSignature.size();
+		size_t funcWrapperSignatureSize = value.funcSignature.size();
 		outFile.write(reinterpret_cast<const char*>(&funcWrapperSignatureSize), sizeof(funcWrapperSignatureSize));
-		outFile.write(value.funcWrapperSignature.c_str(), funcWrapperSignatureSize);
+		outFile.write(value.funcSignature.c_str(), funcWrapperSignatureSize);
 	}
 
+	errs() << "\n" << "** " << __FUNCTION__ << " Saving:" << filename << " hash:"<< g_collectInfo.moduleHash <<" mapsize:"<< mapSize<<"\n";
 
 #if defined(_WIN32)
 	CloseHandle(hMutex); // 释放互斥量
@@ -581,6 +621,111 @@ bool IsFuncNameCollected(const llvm::StringRef& funcName)
 	return false;
 }
 
+//只收集函数的signature
+bool  helper::CollectFunctionSignature(Module& M)
+{
+	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << "\n";
+
+	LLVMContext& Context = M.getContext();
+	IRBuilder<> Builder(Context);
+
+	g_collectInfo.moduleHash = g_ModueHashForPatch;
+
+
+	size_t CollectIndex = 0;
+
+	for (Function& F : M) {
+
+		////isIntrinsic() LLVM 提供的特殊函数，代表一些底层硬件操作或内置功能,这些函数直接映射到目标架构的特定指令，而不需要通过常规的函数调用方式完成。
+		if (F.empty() || F.isDeclaration() || F.isIntrinsic() || IsWrapperFunction(F))
+		{
+			errs() << "skip_func:" << F.getName() << "\n";
+			continue; //只收集当前函数和当前函数调用的函数。 导入的函数没有函数体，不用枚举
+		}
+
+		errs() << "  iterate_func:" << F.getName() << "\n";
+
+		if (!IsFuncNameCollected(F.getName()))
+		{
+			CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(F));
+			g_collectInfo.mapCollectAddressData[F.getName().data()] = oItemInfo;
+
+			errs() << "index: " << CollectIndex - 1 << "    Collect_local_func:" << F.getName() << "\n";
+		}
+
+		// Collect called functions
+		for (BasicBlock& BB : F) {
+			for (Instruction& Inst : BB) {
+				if (auto* Call = dyn_cast<CallBase>(&Inst)) {
+					if (Function* Callee = Call->getCalledFunction()) {
+						if (!Callee->isIntrinsic()/*!Callee->isDeclaration() && Callee->hasInternalLinkage()*/) {
+
+							if (_str_LQCallVm != Callee->getName() && !IsFuncNameCollected(Callee->getName())) //do not need collect LQCallVm. and 函数必须还未收集
+							{
+								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(*Callee));
+								g_collectInfo.mapCollectAddressData[Callee->getName().data()] = oItemInfo;
+
+								errs() << "index: " << CollectIndex - 1 << "    Collect_Call_func:" << Callee->getName() << "\n";
+							}
+
+						}
+					}
+				}
+
+				for (Use& U : Inst.operands()) {
+					if (GlobalVariable* GV = dyn_cast<GlobalVariable>(U.get())) {
+
+						if (!IsFuncNameCollected(GV->getName()))
+						{
+							CollectItemInfo oItemInfo(CollectIndex - 1, em_type_globalValue, "");
+							g_collectInfo.mapCollectAddressData[GV->getName().data()] = oItemInfo;
+
+							errs() << "index: " << CollectIndex - 1 << "    Collect_Used_GV:" << GV->getName() << "\n";
+						}
+
+					}
+				}
+			}
+		}
+	}
+
+	g_AddressCollectedCount = CollectIndex;
+	std::string strSavedDir =  LqCppRldOption;
+
+	if (!strSavedDir.empty() && strSavedDir.back() == '"') {
+		strSavedDir.pop_back();  // Remove the last character
+	}
+
+	// 检查路径是否以斜杠结尾，如果没有则添加
+	if (!strSavedDir.empty() && strSavedDir.back() != '/' && strSavedDir.back() != '\\') {
+		strSavedDir += '/';
+	}
+
+	std::string CurFileName = M.getName().data();
+		// 使用find_last_of找到最后一个路径分隔符的位置
+		size_t pos = CurFileName.find_last_of("/\\");
+		if (pos != std::string::npos) {
+			// 提取从最后一个分隔符后的子字符串作为文件名
+			CurFileName = CurFileName.substr(pos + 1);
+		}
+
+	std::string strSaveFileName = strSavedDir +"CollectData_" + CurFileName + "_"  + std::to_string(g_ModueHashForPatch) + ".dat";
+
+	if (llvm::sys::fs::exists(strSaveFileName)) {
+		llvm::sys::fs::remove(strSaveFileName.c_str());
+			std::cout << "File deleted successfully: " << strSaveFileName << std::endl;
+	}
+	else {
+		std::cout << "File does not exist: " << strSaveFileName << std::endl;
+	}
+
+	saveCollectDataToBinaryFile(strSaveFileName);
+
+	errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << " CollectData:"<< strSaveFileName <<"\n";
+	return true;
+}
+
+#if !defUSeSymDataOffset
 //生成函数 void CollectAddressFunction_moduleHash(void** pAddrTable) ;这个函数外部调用，获取收集的函数和变量地址
 bool helper::CreateCollectAddressFunction(Module& M)
 {
@@ -676,13 +821,27 @@ bool helper::CreateCollectAddressFunction(Module& M)
 	}
 
 	g_AddressCollectedCount = CollectIndex;
-	saveToBinaryFile("D:\\dev-game\\IOS-patch\\TestRunVm\\testCollectAddrData.dat");
+
+	std::string strSaveFileName = strSavedDir + "CollectData_" + CurFileName + "_" + std::to_string(g_ModueHashForPatch) + ".dat";
+
+	if (llvm::sys::fs::exists(strSaveFileName)) {
+		llvm::sys::fs::remove(strSaveFileName.c_str());
+		std::cout << "File deleted successfully: " << strSaveFileName << std::endl;
+	}
+	else {
+		std::cout << "File does not exist: " << strSaveFileName << std::endl;
+	}
+
+	saveCollectDataToBinaryFile(strSaveFileName);
+
+	//saveCollectDataToBinaryFile("D:\\dev-game\\IOS-patch\\TestRunVm\\testCollectAddrData.dat");
 
 	Builder.CreateRetVoid();
 
 	errs() <<"**Leave " << __FUNCTION__ << " M:" << M.getName() << "\n";
 	return true;
 }
+#endif
 
 
 //生成函数 void Create_Init_Module_Function //mod_init_func 类型函数
@@ -699,8 +858,10 @@ bool helper::Create_Init_Module_Function(Module& M)
 		Type::getInt64Ty(Context),  // moduleHash     
 		Type::getInt8PtrTy(Context), // g_needPathValueAddress
 		Type::getInt32Ty(Context), // PatchedFunctionCount
+#if !defUSeSymDataOffset
 		Type::getInt8PtrTy(Context), // collect_FuncVar_Info //收集函数地址
 		Type::getInt32Ty(Context)/*,*/ // collectCounts //收集的总数量
+#endif
 		//Type::getInt32Ty(Context), // collectFuncCounts
 		//Type::getInt32Ty(Context)  // collectGvarCounts
 		});
@@ -741,6 +902,7 @@ bool helper::Create_Init_Module_Function(Module& M)
 	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), g_needPatchFuncCount),
 		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 2));
 
+#if !defUSeSymDataOffset
 	//  设置 CollectAddressFunction 收集函数地址
 	Function* ColFuncVarInfo = M.getFunction(__str_CollectAddressFunction + std::to_string(g_ModueHashForPatch));
 	Value* ColFuncVarInfoPtr = ColFuncVarInfo
@@ -753,6 +915,7 @@ bool helper::Create_Init_Module_Function(Module& M)
 	//设置 g_AddressCollectedCount
 	Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), g_AddressCollectedCount),
 		Builder.CreateStructGEP(ModuleInfoTy, ModInfo, 4));
+#endif
 
 	////设置 collectFuncCounts
 	//Builder.CreateStore(ConstantInt::get(Type::getInt32Ty(Context), 123456),
