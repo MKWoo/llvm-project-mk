@@ -143,19 +143,17 @@ std::string getFunctionID(Function& F) {
 }
 
 
-PreservedAnalyses LqCppReloadModulePass::TestRun(Module& M, ModuleAnalysisManager& AM) {
-
-
-	errs() << "*******Enter LqCppReloadModulePass::run*******" << M.getName() << "\n";
-
-	errs() << "minkee func: " << __FUNCTION__ << M.getName()<< "\n";
-
-// 	bool changed = helper::CountFunctionCallsInModule(M);
-// 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
-
-	return PreservedAnalyses::all();
-
-}
+//PreservedAnalyses LqCppReloadModulePass::TestRun(Module& M, ModuleAnalysisManager& AM) {
+//
+//	errs() << "*******Enter LqCppReloadModulePass::run*******" << M.getName() << "\n";
+//
+//	errs() << "minkee func: " << __FUNCTION__ << M.getName()<< "\n";
+//
+//// 	bool changed = helper::CountFunctionCallsInModule(M);
+//// 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+//
+//	return PreservedAnalyses::all();
+//}
 
 
 
@@ -178,7 +176,7 @@ PreservedAnalyses LqCppReloadModulePass::run(Module& M, ModuleAnalysisManager& A
 	// 使用 CityHash64 计算 64 位哈希值
 	g_ModueHashForPatch = CityHash64(input_str.c_str(), input_str.size());
 
-	errs() << "####### Start_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() <<"  moduleHash:" << g_ModueHashForPatch << " LqCppRldOption:"<<LqCppRldOption <<"\n";
+	errs() << "####### Start_IR_handle " /*<< __FUNCTION__*/ << "  #######  M:" << M.getName() <<"  moduleHash:" << g_ModueHashForPatch << " LqCppRldOption:"<<LqCppRldOption <<"\n";
 
 	bool changed = true;
 	//changed &= helper::BuildWrapperFunction(M);
@@ -192,7 +190,7 @@ PreservedAnalyses LqCppReloadModulePass::run(Module& M, ModuleAnalysisManager& A
 
 	changed &= helper::Create_Init_Module_Function(M);
 
-	errs() << "\n" << "####### End_IR_handle " << __FUNCTION__ << "  #######  M:" << M.getName() << "\n\n\n";
+	errs() << "\n" << "####### End_IR_handle " /*<< __FUNCTION__*/ << "  #######  M:" << M.getName() << "\n\n\n";
 	return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
@@ -270,7 +268,7 @@ std::string getFunctionTypeShortDesc(Function& F) {
 		Signature +=  getTypeNameOneAlpha(Arg.getType());
 	}
 
-	errs() << "      getFunctionTypeShortDesc  " << "func: "<<F.getName()<<"  Signature:" << Signature << "\n";
+	//errs() << "      getFunctionTypeShortDesc  " << "func: "<<F.getName()<<"  Signature:" << Signature << "\n";
 
 	return Signature;
 }
@@ -328,7 +326,8 @@ bool IsWrapperFunction(Function& F){return false;}
 
 bool helper::PatchFunctionCallVM(Module& M)
 {
-	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << " moduleHash:" << g_ModueHashForPatch <<"\n";
+	errs() << "\n" << "**Enter " << "start_patch" << " M:" << M.getName() << " moduleHash:" << g_ModueHashForPatch <<"\n";
+
 	LLVMContext& context = M.getContext();
 
 
@@ -358,7 +357,11 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 		if (F.empty() || F.isDeclaration() || F.isIntrinsic()  || IsWrapperFunction(F))
 		{
-			errs() << "skip_func:" << F.getName() << "\n";
+			if (LqCppRldNeedSave)
+			{
+				errs() << "skip_func:" << F.getName() << "\n";
+			}
+
 			continue;
 		}
 
@@ -367,11 +370,18 @@ bool helper::PatchFunctionCallVM(Module& M)
 		std::string origFuncName = F.getName().str();
 		if (origFuncName == "CallVMFunction" || (origFuncName.npos != origFuncName.find("printf")) || (origFuncName.npos != origFuncName.find("main")))
 		{
-			errs() << "skip by name func:" << origFuncName << "\n";
+			if (LqCppRldNeedSave)
+			{
+				errs() << "skip by name func:" << origFuncName << "\n";
+			}
+
 			continue;
 		}
 
-		errs() << "patch_function id:" << g_funcID << "  Name:"<< origFuncName << "\n";
+		if (LqCppRldNeedSave)
+		{
+			errs() << "patch_function id:" << g_funcID << "  Name:" << origFuncName << "\n";
+		}
 
 		Module* M = F.getParent();
 		LLVMContext& Ctx = M->getContext();
@@ -390,7 +400,6 @@ bool helper::PatchFunctionCallVM(Module& M)
 			structFields.push_back(arg->getType());
 		}
 		structTy->setBody(structFields);
-
 
 		// 在每个函数的入口基本块的开始处插入一个新的基本块
 		BasicBlock& entryBB = F.getEntryBlock();
@@ -500,7 +509,9 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 		++g_funcID;
 	}
-	errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << "\n";
+
+	errs() << "**Leave " << "start_patch" << " M:" << M.getName() << "\n";
+
 	return true;
 }
 
@@ -549,7 +560,7 @@ void saveCollectDataToBinaryFile(const std::string& filename) {
 
 	if (!LqCppRldNeedSave)
 	{
-		errs() << "\n" << "** " << __FUNCTION__ << " **DoNot need Save:" << filename << " hash:" << g_collectInfo.moduleHash <<"\n";	
+		errs() << "\n" << "** " << "save_collectData" << " **No need to Save:" << filename << " hash:" << g_collectInfo.moduleHash << "\n";
 		return ;
 	}
 
@@ -598,7 +609,7 @@ void saveCollectDataToBinaryFile(const std::string& filename) {
 		outFile.write(value.funcSignature.c_str(), funcWrapperSignatureSize);
 	}
 
-	errs() << "\n" << "** " << __FUNCTION__ << " Saving:" << filename << " hash:"<< g_collectInfo.moduleHash <<" mapsize:"<< mapSize<<"\n";
+	errs() << "\n" << "** " << "save_collectData" << " Saved " << filename << " hash:" << g_collectInfo.moduleHash << " mapsize:" << mapSize << "\n";
 
 #if defined(_WIN32)
 	CloseHandle(hMutex); // 释放互斥量
@@ -624,7 +635,11 @@ bool IsFuncNameCollected(const llvm::StringRef& funcName)
 //只收集函数的signature
 bool  helper::CollectFunctionSignature(Module& M)
 {
-	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << "\n";
+	if (LqCppRldNeedSave)
+	{
+		errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << "\n";
+	}
+
 
 	LLVMContext& Context = M.getContext();
 	IRBuilder<> Builder(Context);
@@ -639,18 +654,29 @@ bool  helper::CollectFunctionSignature(Module& M)
 		////isIntrinsic() LLVM 提供的特殊函数，代表一些底层硬件操作或内置功能,这些函数直接映射到目标架构的特定指令，而不需要通过常规的函数调用方式完成。
 		if (F.empty() || F.isDeclaration() || F.isIntrinsic() || IsWrapperFunction(F))
 		{
-			errs() << "skip_func:" << F.getName() << "\n";
+			if (LqCppRldNeedSave)
+			{
+				//errs() << "skip_func:" << F.getName() << "\n";
+			}
+
 			continue; //只收集当前函数和当前函数调用的函数。 导入的函数没有函数体，不用枚举
 		}
 
-		errs() << "  iterate_func:" << F.getName() << "\n";
+// 		if (LqCppRldNeedSave)
+// 		{
+// 			errs() << "  iterate_func:" << F.getName() << "\n";
+// 		}
 
 		if (!IsFuncNameCollected(F.getName()))
 		{
 			CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(F));
 			g_collectInfo.mapCollectAddressData[F.getName().data()] = oItemInfo;
 
-			errs() << "index: " << CollectIndex - 1 << "    Collect_local_func:" << F.getName() << "\n";
+// 			if (LqCppRldNeedSave)
+// 			{
+// 				errs() << "index: " << CollectIndex - 1 << "    Collect_local_func:" << F.getName() << "\n";
+// 			}
+
 		}
 
 		// Collect called functions
@@ -665,9 +691,11 @@ bool  helper::CollectFunctionSignature(Module& M)
 								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(*Callee));
 								g_collectInfo.mapCollectAddressData[Callee->getName().data()] = oItemInfo;
 
-								errs() << "index: " << CollectIndex - 1 << "    Collect_Call_func:" << Callee->getName() << "\n";
+								if (LqCppRldNeedSave)
+								{
+									//errs() << "index: " << CollectIndex - 1 << "    Collect_Call_func:" << Callee->getName() << "\n";
+								}
 							}
-
 						}
 					}
 				}
@@ -680,7 +708,11 @@ bool  helper::CollectFunctionSignature(Module& M)
 							CollectItemInfo oItemInfo(CollectIndex - 1, em_type_globalValue, "");
 							g_collectInfo.mapCollectAddressData[GV->getName().data()] = oItemInfo;
 
-							errs() << "index: " << CollectIndex - 1 << "    Collect_Used_GV:" << GV->getName() << "\n";
+							if (LqCppRldNeedSave)
+							{
+								//errs() << "index: " << CollectIndex - 1 << "    Collect_Used_GV:" << GV->getName() << "\n";
+							}
+
 						}
 
 					}
@@ -713,15 +745,19 @@ bool  helper::CollectFunctionSignature(Module& M)
 
 	if (llvm::sys::fs::exists(strSaveFileName)) {
 		llvm::sys::fs::remove(strSaveFileName.c_str());
-			std::cout << "File deleted successfully: " << strSaveFileName << std::endl;
+			//std::cout << "File deleted successfully: " << strSaveFileName << std::endl;
 	}
 	else {
-		std::cout << "File does not exist: " << strSaveFileName << std::endl;
+		//std::cout << "File does not exist: " << strSaveFileName << std::endl;
 	}
 
 	saveCollectDataToBinaryFile(strSaveFileName);
 
-	errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << " CollectData:"<< strSaveFileName <<"\n";
+	if (LqCppRldNeedSave)
+	{
+		errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << " CollectData:"<< strSaveFileName <<"\n";
+	}
+
 	return true;
 }
 

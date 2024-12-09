@@ -27,7 +27,7 @@ public:
 		bool EmitSummaryIndex = false);
 
 	PreservedAnalyses run(Module& M, AnalysisManager<Module>&);
-	PreservedAnalyses TestRun(Module& M, AnalysisManager<Module>&);
+	//PreservedAnalyses TestRun(Module& M, AnalysisManager<Module>&);
 	static bool isRequired() { return true; }
 };
 
