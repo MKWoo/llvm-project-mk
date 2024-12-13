@@ -217,7 +217,8 @@ const char*  TypeID_str[] {
 	"ArrayTyID",          ///< Arrays
 	"FixedVectorTyID",    ///< Fixed width SIMD vector type
 	"ScalableVectorTyID", ///< Scalable SIMD vector type
-	"DXILPointerTyID",   ///< Typed pointer used by some GPU targets
+	"TypedPointerTyID",   ///< Typed pointer used by some GPU targets
+	"TargetExtTyID",      ///< Target extension type
 };
 
 const char* TypeID_str_oneAlpha[]{
@@ -241,13 +242,17 @@ const char* TypeID_str_oneAlpha[]{
 	"R", // "ArrayTyID",          ///< Arrays
 	"S", // "FixedVectorTyID",    ///< Fixed width SIMD vector type
 	"T", // "ScalableVectorTyID", ///< Scalable SIMD vector type
-	"U", // "DXILPointerTyID",   ///< Typed pointer used by some GPU targets
-	//"V"  // "TargetExtTyID",      ///< Target extension type
+	"U", // "TypedPointerTyID",   ///< Typed pointer used by some GPU targets
+	"V"  // "TargetExtTyID",      ///< Target extension type
 };
 
 
+
+
+
+
 std::string getTypeNameOneAlpha(Type* Ty) {
-	if (Ty->getTypeID() > llvm::Type::TypeID::DXILPointerTyID)
+	if (Ty->getTypeID() > llvm::Type::TypeID::TargetExtTyID)
 	{
 		int* p = 0; *p = 0; //force crash
 	}
