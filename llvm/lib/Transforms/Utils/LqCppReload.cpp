@@ -198,6 +198,7 @@ PreservedAnalyses LqCppReloadModulePass::run(Module& M, ModuleAnalysisManager& A
 	// 使用 CityHash64 计算 64 位哈希值
 	g_ModueHashForPatch = CityHash64(Hash_str.c_str(), Hash_str.size());
 
+	//日志例子：####### Start_IR_handle   #######  M:Runtime/Engine/Private/Slate/SceneViewport.cpp  moduleHash:11057503442973761409 LqCppRldOption:/Volumes/mkSAMSUNG-4/tools/LqRldCollect
 	errs() << "####### Start_IR_handle " /*<< __FUNCTION__*/ << "  #######  M:" << Hash_str <<"  moduleHash:" << g_ModueHashForPatch << " LqCppRldOption:"<<LqCppRldOption <<"\n";
 
 	bool changed = true;
@@ -358,7 +359,32 @@ int g_funcID = 0;
 
 bool IsWrapperFunction(Function& F){return false;}
 
+// Helper function to convert a character to lowercase
+char toLowerChar(char ch) {
+	return std::tolower(static_cast<unsigned char>(ch));
+}
+bool startsWithIgnoreCase(const std::string& str, const std::string& prefix) {
+	if (str.size() < prefix.size()) {
+		return false;
+	}
 
+	for (std::size_t i = 0; i < prefix.size(); ++i) {
+		if (toLowerChar(str[i]) != toLowerChar(prefix[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool IsSkipPatchByFunctioName(const std::string &origFuncName)
+{
+	/*(origFuncName.npos != origFuncName.find("printf")) || (origFuncName.npos != origFuncName.find("main"))*/
+
+	if(origFuncName == _str_LQCallVm || startsWithIgnoreCase(origFuncName, "__cxx_global_var_init") || startsWithIgnoreCase(origFuncName, "__cxa_atexit"))
+		return true;
+
+	return false;
+}
 
 bool helper::PatchFunctionCallVM(Module& M)
 {
@@ -391,7 +417,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 	for (Function& F : M) {
 
-		if (F.empty() || F.isDeclaration() || F.isIntrinsic()  || IsWrapperFunction(F))
+		if (F.empty() || F.isDeclaration() || F.isIntrinsic() /* || IsWrapperFunction(F)*/)
 		{
 			if (LqCppRldNeedSave)
 			{
@@ -404,7 +430,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 		F.addFnAttr("funcID", std::to_string(g_funcID));
 
 		std::string origFuncName = F.getName().str();
-		if (origFuncName == "CallVMFunction" || (origFuncName.npos != origFuncName.find("printf")) || (origFuncName.npos != origFuncName.find("main")))
+		if (IsSkipPatchByFunctioName(origFuncName))
 		{
 			if (LqCppRldNeedSave)
 			{
@@ -416,7 +442,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 
 		if (LqCppRldNeedSave)
 		{
-			errs() << "patch_function id:" << g_funcID << "  Name:" << origFuncName << "\n";
+			errs() << "patch_function id:" << g_funcID << "  Name:" << origFuncName << "  func return type:"<< F.getReturnType()->getTypeID()<< "\n";
 		}
 
 		Module* M = F.getParent();
@@ -531,7 +557,7 @@ bool helper::PatchFunctionCallVM(Module& M)
 					ConvertedReturnValue = builder.CreateBitOrPointerCast(VmReturnValue, CurFReturnType);
 				}
 				else {
-					errs() << "Unsupported return type conversion\n";
+					errs() << "Unsupported return type conversion. funcReturnType:"<< CurFReturnType->getTypeID() <<"\n";
 					ConvertedReturnValue = Constant::getNullValue(F.getReturnType());
 				}
 			}
