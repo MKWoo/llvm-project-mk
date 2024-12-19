@@ -41,6 +41,7 @@ using namespace llvm;
 #define defUSeSymDataOffset 1 //用nm的符号文件,而不是收集函数 . 为1的话，只收集函数的signature
 
 //LqRldSaveDir="your_value"
+//保存收集信息的文件夹
 static llvm::cl::opt<std::string> LqCppRldOption(
 	"LqRldSaveDir",
 	llvm::cl::desc("This is LqRldSaveDir for my pass"),
@@ -48,7 +49,8 @@ static llvm::cl::opt<std::string> LqCppRldOption(
 	llvm::cl::init("default value")
 );
 
-//LqRldSaveDir="your_value"
+//控制是否要收集信息，true：是需要执行patch的cpp，需要收集信息，并打印日志；
+// false：只需要执行给函数增加patch逻辑，不需要收集信息，也不需要打日志。不让日志会特别多；
 static llvm::cl::opt<bool> LqCppRldNeedSave(
 	"LqRldSave",
 	llvm::cl::desc("This is LqCppRldNeedSave for my pass"),
@@ -183,7 +185,10 @@ PreservedAnalyses LqCppReloadModulePass::run(Module& M, ModuleAnalysisManager& A
 	changed &= helper::PatchFunctionCallVM(M);
 
 #if defUSeSymDataOffset
-	changed &= helper::CollectFunctionSignature(M);
+	if (LqCppRldNeedSave)
+	{
+		changed &= helper::CollectFunctionSignature(M);
+	}
 #else
 	changed &= helper::CreateCollectAddressFunction(M);
 #endif
@@ -266,6 +271,17 @@ std::string getFunctionTypeShortDesc(Function& F) {
 	std::string Signature = getTypeNameOneAlpha(F.getReturnType());
 	for (auto& Arg : F.args()) {
 		Signature +=  getTypeNameOneAlpha(Arg.getType());
+	}
+
+	//errs() << "      getFunctionTypeShortDesc  " << "func: "<<F.getName()<<"  Signature:" << Signature << "\n";
+
+	return Signature;
+}
+
+std::string getFunctionTypeShortDescIndirect(FunctionType* funcType) {
+	std::string Signature = getTypeNameOneAlpha(funcType->getReturnType());
+	for (unsigned i = 0; i < funcType->getNumParams(); ++i) {
+		Signature += getTypeNameOneAlpha(funcType->getParamType(i));
 	}
 
 	//errs() << "      getFunctionTypeShortDesc  " << "func: "<<F.getName()<<"  Signature:" << Signature << "\n";
@@ -632,14 +648,18 @@ bool IsFuncNameCollected(const llvm::StringRef& funcName)
 	return false;
 }
 
+//LLVM intrinsic函数的概念，它们是编译器内建的特殊函数，具有已知的名称和语义。LLVM intrinsic命名以'llvm'开头，不允许定义其函数体。它们可以被重载，例如llvm.ctpop函数可以对任意宽度整数进行操作。
+
 //只收集函数的signature
 bool  helper::CollectFunctionSignature(Module& M)
 {
-	if (LqCppRldNeedSave)
+	if (!LqCppRldNeedSave)
 	{
-		errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << "\n";
+		errs() << "\n" << "** No_need_collect. Return " << __FUNCTION__ << " M:" << M.getName() << "\n";
+		return false;
 	}
 
+	errs() << "\n" << "**Enter " << __FUNCTION__ << " M:" << M.getName() << "\n";
 
 	LLVMContext& Context = M.getContext();
 	IRBuilder<> Builder(Context);
@@ -654,10 +674,7 @@ bool  helper::CollectFunctionSignature(Module& M)
 		////isIntrinsic() LLVM 提供的特殊函数，代表一些底层硬件操作或内置功能,这些函数直接映射到目标架构的特定指令，而不需要通过常规的函数调用方式完成。
 		if (F.empty() || F.isDeclaration() || F.isIntrinsic() || IsWrapperFunction(F))
 		{
-			if (LqCppRldNeedSave)
-			{
-				//errs() << "skip_func:" << F.getName() << "\n";
-			}
+			errs() << "skip_func:" << F.getName() << "\n";
 
 			continue; //只收集当前函数和当前函数调用的函数。 导入的函数没有函数体，不用枚举
 		}
@@ -671,11 +688,7 @@ bool  helper::CollectFunctionSignature(Module& M)
 		{
 			CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(F));
 			g_collectInfo.mapCollectAddressData[F.getName().data()] = oItemInfo;
-
-// 			if (LqCppRldNeedSave)
-// 			{
-// 				errs() << "index: " << CollectIndex - 1 << "    Collect_local_func:" << F.getName() << "\n";
-// 			}
+ 			errs() << "index: " << CollectIndex - 1 << "    Collect_local_func:" << F.getName() << "\n";
 
 		}
 
@@ -684,20 +697,33 @@ bool  helper::CollectFunctionSignature(Module& M)
 			for (Instruction& Inst : BB) {
 				if (auto* Call = dyn_cast<CallBase>(&Inst)) {
 					if (Function* Callee = Call->getCalledFunction()) {
-						if (!Callee->isIntrinsic()/*!Callee->isDeclaration() && Callee->hasInternalLinkage()*/) {
-
+						if (true/*!Callee->isIntrinsic() 函数也需要*//*!Callee->isDeclaration() && Callee->hasInternalLinkage()*/) {
 							if (_str_LQCallVm != Callee->getName() && !IsFuncNameCollected(Callee->getName())) //do not need collect LQCallVm. and 函数必须还未收集
 							{
 								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(*Callee));
 								g_collectInfo.mapCollectAddressData[Callee->getName().data()] = oItemInfo;
-
-								if (LqCppRldNeedSave)
-								{
-									//errs() << "index: " << CollectIndex - 1 << "    Collect_Call_func:" << Callee->getName() << "\n";
-								}
+								errs() << "index: " << CollectIndex - 1 << "    Collect_Call_func. isIntrinsic:" << Callee->isIntrinsic() << " Name:"<< Callee->getName() << "\n";
 							}
 						}
 					}
+ 					else //调用虚函数
+ 					{
+ 						// We are looking for CallInst which might be indirect
+ 						errs() << "index: " << CollectIndex - 1 << "    Collect_Call_func Indirect function. isIndirectCall:" << Call->isIndirectCall()<< "\n";
+ 						// This is an indirect call since called function is null
+ 						//Type* calledType = Call->getCalledOperand()->getType();
+ 						//if (PointerType* pt = dyn_cast<PointerType>(calledType)) {
+ 						//	if (FunctionType* funcType = cast<FunctionType>(pt->getElementType())) {
+ 						//		std::string signature = getFunctionTypeShortDescIndirect(funcType);
+ 						//		std::cout << "    Virtual Function Signature. isIndirectCall:" << Call->isIndirectCall() << " signature:" << signature << "\n";
+ 						//	}
+ 						//}
+
+						if (FunctionType* funcType = cast<FunctionType>(Call->getFunctionType())) {
+							std::string signature = getFunctionTypeShortDescIndirect(funcType);
+							std::cout << "        Virtual Function Signature. isIndirectCall:" << Call->isIndirectCall() << " signature:" << signature << "\n";
+						}
+ 					}
 				}
 
 				for (Use& U : Inst.operands()) {
@@ -707,14 +733,8 @@ bool  helper::CollectFunctionSignature(Module& M)
 						{
 							CollectItemInfo oItemInfo(CollectIndex - 1, em_type_globalValue, "");
 							g_collectInfo.mapCollectAddressData[GV->getName().data()] = oItemInfo;
-
-							if (LqCppRldNeedSave)
-							{
-								//errs() << "index: " << CollectIndex - 1 << "    Collect_Used_GV:" << GV->getName() << "\n";
-							}
-
+							errs() << "index: " << CollectIndex - 1 << "    Collect_Used_GV:" << GV->getName() << "\n";
 						}
-
 					}
 				}
 			}
@@ -753,10 +773,7 @@ bool  helper::CollectFunctionSignature(Module& M)
 
 	saveCollectDataToBinaryFile(strSaveFileName);
 
-	if (LqCppRldNeedSave)
-	{
-		errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << " CollectData:"<< strSaveFileName <<"\n";
-	}
+	errs() << "**Leave " << __FUNCTION__ << " M:" << M.getName() << " CollectData:"<< strSaveFileName <<"\n";
 
 	return true;
 }
