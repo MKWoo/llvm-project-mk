@@ -156,6 +156,26 @@ std::string getFunctionID(Function& F) {
 //
 //	return PreservedAnalyses::all();
 //}
+// 
+// 
+// 
+// Function to extract the second part of the string
+std::string extractSecondPart(const std::string& s) {
+	size_t firstDot = s.find('.');
+	if (firstDot == std::string::npos) {
+		// No dot found, entire string is first part
+		return "";
+	}
+
+	size_t secondDot = s.find('.', firstDot + 1);
+	if (secondDot == std::string::npos) {
+		// Only one dot in string, the second part is after the first dot
+		return s.substr(firstDot + 1);
+	}
+
+	// In the case of at least two dots, extract the substring between the first and second dots
+	return s.substr(firstDot + 1, secondDot - firstDot - 1);
+}
 
 
 
@@ -173,12 +193,12 @@ uint32_t  g_AddressCollectedCount = 0; //收集的函数/全局变量地址  总
 //#define __wrapper_GV_stuct_construct_function_prefix "__ConstuctSt_"
 
 PreservedAnalyses LqCppReloadModulePass::run(Module& M, ModuleAnalysisManager& AM) {
-	std::string input_str =  M.getSourceFileName();
+	std::string Hash_str =  M.getSourceFileName();
 
 	// 使用 CityHash64 计算 64 位哈希值
-	g_ModueHashForPatch = CityHash64(input_str.c_str(), input_str.size());
+	g_ModueHashForPatch = CityHash64(Hash_str.c_str(), Hash_str.size());
 
-	errs() << "####### Start_IR_handle " /*<< __FUNCTION__*/ << "  #######  M:" << M.getName() <<"  moduleHash:" << g_ModueHashForPatch << " LqCppRldOption:"<<LqCppRldOption <<"\n";
+	errs() << "####### Start_IR_handle " /*<< __FUNCTION__*/ << "  #######  M:" << Hash_str <<"  moduleHash:" << g_ModueHashForPatch << " LqCppRldOption:"<<LqCppRldOption <<"\n";
 
 	bool changed = true;
 	//changed &= helper::BuildWrapperFunction(M);
@@ -542,17 +562,18 @@ enum emCollectType
 	em_type_globalValue = 1,
 };
 
+
 struct CollectItemInfo
 {
-	uint32_t collectIndex = 0; //在数组的存放index，调用Builder.CreateStore时index +1。 当前collectIndex的最大值决定回调CollectAddressFunction时，需要new的数组大小
+	//uint32_t collectIndex = 0; //在数组的存放index，调用Builder.CreateStore时index +1。 当前collectIndex的最大值决定回调CollectAddressFunction时，需要new的数组大小
 	uint32_t collectType = 0; //函数或全局变量 emCollectType
 	std::string funcSignature; //PQS 返回值类型+参数类型//wrapper_VoidTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID_PointerTyID 字符串函数，wrapper_+函数返回值类型+参数类型
 
-	CollectItemInfo() :collectIndex(0), collectType(0)
+	CollectItemInfo() :/*collectIndex(0),*/ collectType(0)
 	{}
-	CollectItemInfo(const CollectItemInfo& other) :collectIndex(other.collectIndex), collectType(other.collectType), funcSignature(other.funcSignature)
+	CollectItemInfo(const CollectItemInfo& other) :/*collectIndex(other.collectIndex), */collectType(other.collectType), funcSignature(other.funcSignature)
 	{}
-	CollectItemInfo(uint32_t collectIndex_in, uint32_t collectType_in, std::string funcSignature_in) :collectIndex(collectIndex_in), collectType(collectType_in), funcSignature(funcSignature_in)
+	CollectItemInfo(/*uint32_t collectIndex_in,*/ uint32_t collectType_in, std::string funcSignature_in) :/*collectIndex(collectIndex_in), */collectType(collectType_in), funcSignature(funcSignature_in)
 	{}
 };
 
@@ -617,7 +638,7 @@ void saveCollectDataToBinaryFile(const std::string& filename) {
 		size_t keySize = key.size();
 		outFile.write(reinterpret_cast<const char*>(&keySize), sizeof(keySize));
 		outFile.write(key.c_str(), keySize);
-		outFile.write(reinterpret_cast<const char*>(&value.collectIndex), sizeof(value.collectIndex));
+		//outFile.write(reinterpret_cast<const char*>(&value.collectIndex), sizeof(value.collectIndex));
 		outFile.write(reinterpret_cast<const char*>(&value.collectType), sizeof(value.collectType));
 		//outFile.write(reinterpret_cast<const char*>(&value.funcWrapperSignatureHash), sizeof(value.funcWrapperSignatureHash));
 		size_t funcWrapperSignatureSize = value.funcSignature.size();
@@ -667,8 +688,6 @@ bool  helper::CollectFunctionSignature(Module& M)
 	g_collectInfo.moduleHash = g_ModueHashForPatch;
 
 
-	size_t CollectIndex = 0;
-
 	for (Function& F : M) {
 
 		////isIntrinsic() LLVM 提供的特殊函数，代表一些底层硬件操作或内置功能,这些函数直接映射到目标架构的特定指令，而不需要通过常规的函数调用方式完成。
@@ -686,9 +705,9 @@ bool  helper::CollectFunctionSignature(Module& M)
 
 		if (!IsFuncNameCollected(F.getName()))
 		{
-			CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(F));
+			CollectItemInfo oItemInfo( em_type_function, getFunctionTypeShortDesc(F));
 			g_collectInfo.mapCollectAddressData[F.getName().data()] = oItemInfo;
- 			errs() << "index: " << CollectIndex - 1 << "    Collect_local_func:" << F.getName() << "\n";
+ 			errs() <<"Collect_local_func:" << F.getName() << "\n";
 
 		}
 
@@ -700,16 +719,27 @@ bool  helper::CollectFunctionSignature(Module& M)
 						if (true/*!Callee->isIntrinsic() 函数也需要*//*!Callee->isDeclaration() && Callee->hasInternalLinkage()*/) {
 							if (_str_LQCallVm != Callee->getName() && !IsFuncNameCollected(Callee->getName())) //do not need collect LQCallVm. and 函数必须还未收集
 							{
-								CollectItemInfo oItemInfo(CollectIndex - 1, em_type_function, getFunctionTypeShortDesc(*Callee));
-								g_collectInfo.mapCollectAddressData[Callee->getName().data()] = oItemInfo;
-								errs() << "index: " << CollectIndex - 1 << "    Collect_Call_func. isIntrinsic:" << Callee->isIntrinsic() << " Name:"<< Callee->getName() << "\n";
+								CollectItemInfo oItemInfo( em_type_function, getFunctionTypeShortDesc(*Callee));
+								g_collectInfo.mapCollectAddressData[Callee->getName().data()] = oItemInfo; //isIntrinsic 为true的话，getName 以llvm.开头
+
+								if (Callee->isIntrinsic())
+								{
+									std::string strSecondPart =  extractSecondPart(Callee->getName().data()); //llvm.memcpy.p0.p0.i64 -> memcpy
+									CollectItemInfo oItemInfo(em_type_function, getFunctionTypeShortDesc(*Callee));
+									g_collectInfo.mapCollectAddressData[strSecondPart] = oItemInfo; //isIntrinsic 为true的话，getName 以llvm.开头
+									errs() << "    Collect_Call_func. isIntrinsic:" << Callee->isIntrinsic() << " Name:" << Callee->getName() << " "<<" Collect ExtraName:"<< strSecondPart<< "\n";
+								}
+								else
+								{
+									errs() << "    Collect_Call_func."<< " Name:" << Callee->getName() << "\n";
+								}
+								
 							}
 						}
 					}
  					else //调用虚函数
  					{
  						// We are looking for CallInst which might be indirect
- 						errs() << "index: " << CollectIndex - 1 << "    Collect_Call_func Indirect function. isIndirectCall:" << Call->isIndirectCall()<< "\n";
  						// This is an indirect call since called function is null
  						//Type* calledType = Call->getCalledOperand()->getType();
  						//if (PointerType* pt = dyn_cast<PointerType>(calledType)) {
@@ -721,9 +751,13 @@ bool  helper::CollectFunctionSignature(Module& M)
 
 						if (FunctionType* funcType = cast<FunctionType>(Call->getFunctionType())) {
 							std::string signature = getFunctionTypeShortDescIndirect(funcType);
-							std::cout << "        Virtual Function Signature. isIndirectCall:" << Call->isIndirectCall() << " signature:" << signature << "\n";
+							std::cout << "    Check call function signature. isIndirectCall:" << Call->isIndirectCall() << " signature:" << signature << "\n";
 						}
- 					}
+						else
+						{
+							std::cout << "    Check call function signature. isIndirectCall:" << Call->isIndirectCall() << " getFunctionType Error!!" << "\n";
+ 						}
+					}
 				}
 
 				for (Use& U : Inst.operands()) {
@@ -731,9 +765,9 @@ bool  helper::CollectFunctionSignature(Module& M)
 
 						if (!IsFuncNameCollected(GV->getName()))
 						{
-							CollectItemInfo oItemInfo(CollectIndex - 1, em_type_globalValue, "");
+							CollectItemInfo oItemInfo(em_type_globalValue, "");
 							g_collectInfo.mapCollectAddressData[GV->getName().data()] = oItemInfo;
-							errs() << "index: " << CollectIndex - 1 << "    Collect_Used_GV:" << GV->getName() << "\n";
+							errs() << "    Collect_Used_GV:" << GV->getName() << "\n";
 						}
 					}
 				}
@@ -741,7 +775,7 @@ bool  helper::CollectFunctionSignature(Module& M)
 		}
 	}
 
-	g_AddressCollectedCount = CollectIndex;
+	//g_AddressCollectedCount = CollectIndex;
 	std::string strSavedDir =  LqCppRldOption;
 
 	if (!strSavedDir.empty() && strSavedDir.back() == '"') {
