@@ -199,7 +199,12 @@ PreservedAnalyses LqCppReloadModulePass::run(Module& M, ModuleAnalysisManager& A
 	g_ModueHashForPatch = CityHash64(Hash_str.c_str(), Hash_str.size());
 
 	//日志例子：####### Start_IR_handle   #######  M:Runtime/Engine/Private/Slate/SceneViewport.cpp  moduleHash:11057503442973761409 LqCppRldOption:/Volumes/mkSAMSUNG-4/tools/LqRldCollect
-	errs() << "####### Start_IR_handle " /*<< __FUNCTION__*/ << "  #######  M:" << Hash_str <<"  moduleHash:" << g_ModueHashForPatch << " LqCppRldOption:"<<LqCppRldOption <<"\n";
+	errs() << "####### Start_IR_handle " /*<< __FUNCTION__*/ << "  #######  M:" << Hash_str <<"  moduleHash:" << llvm::format_hex(g_ModueHashForPatch, 10) << " LqCppRldNeedSave:"<< LqCppRldNeedSave << " LqCppRldOption:"<<LqCppRldOption <<"\n";
+
+	if (Hash_str.find("UnrealInsightsMain.cpp") != std::string::npos)
+	{
+		LqCppRldNeedSave =1;
+	}
 
 	bool changed = true;
 	//changed &= helper::BuildWrapperFunction(M);
@@ -388,7 +393,7 @@ bool IsSkipPatchByFunctioName(const std::string &origFuncName)
 
 bool helper::PatchFunctionCallVM(Module& M)
 {
-	errs() << "\n" << "**Enter " << "start_patch" << " M:" << M.getName() << " moduleHash:" << g_ModueHashForPatch <<"\n";
+	errs() << "\n" << "**Enter " << "start_patch" << " M:" << M.getName() << " moduleHash:" << llvm::format_hex(g_ModueHashForPatch, 10) <<"\n";
 
 	LLVMContext& context = M.getContext();
 
@@ -412,7 +417,8 @@ bool helper::PatchFunctionCallVM(Module& M)
 		__str_g_needpatch_lqcppReload + std::to_string(g_ModueHashForPatch));
 
 	// 创建CallVm函数原型 bool CallVm( /*char* strFunName,*/ void* pParameters, int paraCount, int funcID)    pParameters是栈上的原函数参数组成的数据
-	FunctionType* callVmType = FunctionType::get(Type::getInt64Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt64PtrTy(context), Type::getInt32Ty(context), Type::getInt32Ty(context) }, false);
+	// 创建CallVm函数原型 bool CallVm( /*char* strFunName,*/ void* pParameters, int paraCount, int64 moduleHash, int funcID)    pParameters是栈上的原函数参数组成的数据--new传入hash参数
+	FunctionType* callVmType = FunctionType::get(Type::getInt64Ty(context), { /*Type::getInt8PtrTy(context),*/ Type::getInt64PtrTy(context), Type::getInt32Ty(context), Type::getInt64Ty(context), Type::getInt32Ty(context) }, false);
 	Function* callVmFunc = Function::Create(callVmType, GlobalValue::ExternalLinkage, _str_LQCallVm, M);
 
 	for (Function& F : M) {
@@ -497,8 +503,10 @@ bool helper::PatchFunctionCallVM(Module& M)
 		// 调用CallVm函数
 		//Value* funcName = builder.CreateGlobalStringPtr(F.getName()); //// 获取当前函数名
 		Value* ArgCount = builder.getInt32(args.size());
-		//Value* funcIDValue = builder.getInt32(funcID);
-		Value* callVmArgs[] = { /*funcName,*/ paras, ArgCount, funcIDValue };
+
+		ConstantInt* moduleHashConstant = ConstantInt::get(Type::getInt64Ty(context), g_ModueHashForPatch); //moduleHash
+
+		Value* callVmArgs[] = { /*funcName,*/ paras, ArgCount, moduleHashConstant, funcIDValue };
 		Value* VmReturnValue = builder.CreateCall(callVmType, callVmFunc, callVmArgs); //vm函数返回值是uint64类型
 
 		// Get the current function's return type
@@ -777,11 +785,11 @@ bool  helper::CollectFunctionSignature(Module& M)
 
 						if (FunctionType* funcType = cast<FunctionType>(Call->getFunctionType())) {
 							std::string signature = getFunctionTypeShortDescIndirect(funcType);
-							std::cout << "    Check call function signature. isIndirectCall:" << Call->isIndirectCall() << " signature:" << signature << "\n";
+							errs() << "    Check call function signature. isIndirectCall:" << Call->isIndirectCall() << " signature:" << signature << "\n";
 						}
 						else
 						{
-							std::cout << "    Check call function signature. isIndirectCall:" << Call->isIndirectCall() << " getFunctionType Error!!" << "\n";
+							errs() << "    Check call function signature. isIndirectCall:" << Call->isIndirectCall() << " getFunctionType Error!!" << "\n";
  						}
 					}
 				}
