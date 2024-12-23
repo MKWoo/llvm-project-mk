@@ -741,7 +741,7 @@ bool  helper::CollectFunctionSignature(Module& M)
 		{
 			CollectItemInfo oItemInfo( em_type_function, getFunctionTypeShortDesc(F));
 			g_collectInfo.mapCollectAddressData[F.getName().data()] = oItemInfo;
- 			errs() <<"Collect_local_func:" << F.getName() << "\n";
+ 			errs() <<"Collect_local_func:" << F.getName() << " signature:"<< getFunctionTypeShortDesc(F) <<"\n";
 
 		}
 
@@ -761,11 +761,11 @@ bool  helper::CollectFunctionSignature(Module& M)
 									std::string strSecondPart =  extractSecondPart(Callee->getName().data()); //llvm.memcpy.p0.p0.i64 -> memcpy
 									CollectItemInfo oItemInfo(em_type_function, getFunctionTypeShortDesc(*Callee));
 									g_collectInfo.mapCollectAddressData[strSecondPart] = oItemInfo; //isIntrinsic 为true的话，getName 以llvm.开头
-									errs() << "    Collect_Call_func. isIntrinsic:" << Callee->isIntrinsic() << " Name:" << Callee->getName() << " "<<" Collect ExtraName:"<< strSecondPart<< "\n";
+									errs() << "    Collect_Call_func. isIntrinsic:" << Callee->isIntrinsic() << " Name:" << Callee->getName() << " "<<" Collect ExtraName:"<< strSecondPart << " signature:" << getFunctionTypeShortDesc(F) << "\n";
 								}
 								else
 								{
-									errs() << "    Collect_Call_func."<< " Name:" << Callee->getName() << "\n";
+									errs() << "    Collect_Call_func."<< " Name:" << Callee->getName() << " signature:" << getFunctionTypeShortDesc(F) << "\n";
 								}
 								
 							}
